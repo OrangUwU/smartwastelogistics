@@ -91,19 +91,25 @@ app.post('/webhook/whatsapp', async (req, res) => {
       req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.text?.body ||
       (typeof req.body === 'string' ? req.body : '');
 
-    console.log(`📩 Received WhatsApp Webhook payload: "${incomingText}"`, req.body);
+    const trimmed = (incomingText || '').trim();
 
-    if (!incomingText || typeof incomingText !== 'string') {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing message content in webhook payload. Format expected: "PENUH <hub_id>"'
+    // Only process if it starts with PENUH or KOSONG/EMPTY
+    const isPenuh = /^PENUH(?:\s*\d+)?$/i.test(trimmed);
+    const isKosong = /^(?:KOSONG|EMPTY)\s+(\d+)$/i.test(trimmed);
+
+    // If it's a personal chat / not a command, immediately return 200 OK without console spamming
+    if (!isPenuh && !isKosong) {
+      return res.status(200).json({
+        success: true,
+        ignored: true,
+        message: 'Personal chat ignored.'
       });
     }
 
-    const trimmed = incomingText.trim();
+    console.log(`📩 Received WhatsApp Command: "${trimmed}" from ${req.body?.pushname || req.body?.sender || 'user'}`);
 
-    // 1. Check for "PENUH" or "PENUH <id>" command
-    const penuhMatch = trimmed.match(/^PENUH(?:\s+(\d+))?$/i);
+    // 1. Check for "PENUH" or "PENUH <id>" command (supports "PENUH 2" or "PENUH2")
+    const penuhMatch = trimmed.match(/^PENUH\s*(\d+)?$/i);
 
     if (penuhMatch) {
       let hubId = penuhMatch[1] ? parseInt(penuhMatch[1], 10) : null;
