@@ -2,900 +2,1444 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DLH Smart Dispatcher - Logistik Sampah Adaptif Banyuwangi</title>
-  <meta name="description" content="Sistem Dispatching Rute Dinamis & Pemantauan Micro-Hub DLH Banyuwangi berbasis WhatsApp Bot & Socket.io">
-  
-  <!-- Google Fonts: Plus Jakarta Sans & JetBrains Mono -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#090A0F">
+  <title>Smart-Node Logistics · DLH Banyuwangi Spatial Dispatcher</title>
+  <meta name="description" content="Smart-Node Logistics (IEFC ITB): dispatcher rute dinamis armada sampah DLH Banyuwangi berbasis laporan WhatsApp warga (Human-as-a-Sensor), konsolidasi Micro-Hub, dan optimasi rute Nearest Neighbor + 2-Opt secara real-time.">
+
+  <!-- Typography: Plus Jakarta Sans (UI) + JetBrains Mono (metrics) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
   <!-- Mapbox GL JS -->
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet">
   <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
-  
+
+  <!-- Motion & Icons (UI degrades gracefully if either CDN fails) -->
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
   <!-- Socket.io Client -->
   <script src="/socket.io/socket.io.js"></script>
 
   <style>
+    /* =========================================================
+       1. DESIGN TOKENS
+       ========================================================= */
     :root {
-      --bg-dark: #080c14;
-      --surface-card: rgba(14, 20, 32, 0.85);
-      --surface-card-hover: rgba(22, 32, 52, 0.95);
-      --surface-border: rgba(255, 255, 255, 0.08);
-      --surface-border-subtle: rgba(255, 255, 255, 0.04);
-      --dlh-green: #10b981;
-      --dlh-green-glow: rgba(16, 185, 129, 0.4);
-      --dlh-amber: #f59e0b;
-      --dlh-red: #ef4444;
-      --dlh-red-glow: rgba(239, 68, 68, 0.5);
-      --dlh-cyan: #06b6d4;
-      --dlh-cyan-glow: rgba(6, 182, 212, 0.35);
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
-      --font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-      --font-mono: 'JetBrains Mono', monospace;
+      --bg: #090A0F;
+      --glass: rgba(12, 14, 20, 0.72);
+      --glass-strong: rgba(12, 14, 20, 0.86);
+      --glass-hover: rgba(18, 21, 30, 0.82);
+      --stroke: rgba(255, 255, 255, 0.08);
+      --stroke-hi: rgba(255, 255, 255, 0.16);
+
+      --emerald: #10B981;
+      --emerald-soft: rgba(16, 185, 129, 0.14);
+      --coral: #EF4444;
+      --coral-soft: rgba(239, 68, 68, 0.14);
+      --cyan: #22D3EE;
+      --cyan-soft: rgba(34, 211, 238, 0.12);
+      --amber: #F5B544;
+      --amber-soft: rgba(245, 181, 68, 0.14);
+
+      --text: #F4F6FA;
+      --muted: #8B93A7;
+      --dim: #5B6275;
+
+      --font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+      --r-lg: 22px;
+      --r-md: 16px;
+      --r-sm: 11px;
+      --gap: 16px;
+      --top-offset: 88px;
+      --drawer-w: 400px;
+      --hud-w: 300px;
+      --ease-spring: cubic-bezier(0.22, 1.25, 0.36, 1);
     }
 
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    body {
-      font-family: var(--font-family);
-      background-color: var(--bg-dark);
-      color: var(--text-main);
-      overflow: hidden;
-      height: 100vh;
-      width: 100vw;
-      display: flex;
-      flex-direction: column;
-    }
-
-    /* Top Command Header */
-    header {
-      height: 64px;
-      background: rgba(8, 12, 20, 0.95);
-      backdrop-filter: blur(16px);
-      border-bottom: 1px solid var(--surface-border);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 20px;
-      z-index: 100;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .brand-badge {
-      padding: 4px 8px;
-      background: rgba(16, 185, 129, 0.15);
-      border: 1px solid rgba(16, 185, 129, 0.3);
-      color: var(--dlh-green);
-      font-size: 0.7rem;
-      font-weight: 800;
-      border-radius: 6px;
-      letter-spacing: 0.05em;
-    }
-
-    .brand-title {
-      font-size: 1.05rem;
-      font-weight: 800;
-      letter-spacing: -0.02em;
-      color: #fff;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .brand-subtitle {
-      font-size: 0.72rem;
-      color: var(--text-muted);
-      font-weight: 500;
-    }
-
-    .header-actions {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .quick-route-btn {
-      background: linear-gradient(135deg, #059669, #10b981);
-      border: none;
-      color: #fff;
-      padding: 7px 14px;
-      border-radius: 8px;
-      font-size: 0.78rem;
-      font-weight: 700;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      box-shadow: 0 2px 10px rgba(16, 185, 129, 0.3);
-      transition: all 0.2s;
-    }
-
-    .quick-route-btn:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 4px 15px rgba(16, 185, 129, 0.45);
-    }
-
-    .socket-status {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      font-size: 0.75rem;
-      font-weight: 600;
-      padding: 5px 12px;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid var(--surface-border);
-      border-radius: 9999px;
-    }
-
-    .socket-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background-color: var(--dlh-red);
-      box-shadow: 0 0 8px var(--dlh-red);
-      transition: background-color 0.3s;
-    }
-
-    .socket-dot.connected {
-      background-color: var(--dlh-green);
-      box-shadow: 0 0 8px var(--dlh-green);
-    }
-
-    /* Main Content Layout */
-    .dashboard-layout {
-      flex: 1;
-      display: flex;
-      position: relative;
-      overflow: hidden;
-    }
-
-    /* Map View Container */
-    #map-container {
-      flex: 1;
-      height: 100%;
-      position: relative;
-    }
-
-    #map {
+    html, body {
       width: 100%;
       height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      -webkit-font-smoothing: antialiased;
+      letter-spacing: -0.01em;
     }
 
-    /* Map Overlay Legend */
-    .map-overlay-legend {
+    button { font-family: inherit; color: inherit; border: none; background: none; cursor: pointer; }
+    input { font-family: inherit; }
+    .mono { font-family: var(--mono); letter-spacing: -0.02em; }
+
+    /* Lucide icon sizing */
+    [data-lucide], .lucide { width: 16px; height: 16px; stroke-width: 1.9; flex-shrink: 0; }
+
+    /* =========================================================
+       2. FULL-SCREEN SPATIAL CANVAS
+       ========================================================= */
+    #map { position: fixed; inset: 0; z-index: 0; }
+
+    .vignette {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 1;
+      background:
+        radial-gradient(120% 80% at 50% 40%, transparent 55%, rgba(9, 10, 15, 0.75) 100%),
+        linear-gradient(180deg, rgba(9, 10, 15, 0.55) 0%, transparent 14%, transparent 86%, rgba(9, 10, 15, 0.6) 100%);
+    }
+
+    /* =========================================================
+       3. GLASS PRIMITIVE (1px gradient border + inner glow)
+       ========================================================= */
+    .glass {
+      position: relative;
+      background: var(--glass);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid var(--stroke);
+      box-shadow: 0 18px 50px -18px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      transition: background 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+    }
+
+    .glass::before {
+      content: '';
       position: absolute;
+      inset: -1px;
+      border-radius: inherit;
+      padding: 1px;
+      background: linear-gradient(140deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.02) 38%, rgba(255, 255, 255, 0) 62%, rgba(34, 211, 238, 0.18));
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      display: block;
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--dim);
+    }
+
+    .icon-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      border: 1px solid var(--stroke);
+      background: rgba(255, 255, 255, 0.02);
+      transition: color 0.2s, background 0.2s, border-color 0.2s, transform 0.4s var(--ease-spring);
+    }
+    .icon-btn:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); border-color: var(--stroke-hi); }
+
+    /* =========================================================
+       4. TOP DYNAMIC ISLAND
+       ========================================================= */
+    .island {
+      position: fixed;
       top: 16px;
-      left: 16px;
-      z-index: 10;
-      background: var(--surface-card);
-      backdrop-filter: blur(14px);
-      border: 1px solid var(--surface-border);
-      border-radius: 10px;
-      padding: 10px 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      font-size: 0.75rem;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    }
-
-    .legend-item {
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
       display: flex;
       align-items: center;
-      gap: 8px;
-    }
-
-    .legend-dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-    }
-
-    .legend-dot.red { background: var(--dlh-red); box-shadow: 0 0 8px var(--dlh-red); }
-    .legend-dot.green { background: var(--dlh-green); box-shadow: 0 0 8px var(--dlh-green); }
-    .legend-dot.cyan { background: var(--dlh-cyan); box-shadow: 0 0 8px var(--dlh-cyan); }
-
-    /* DLH Dispatcher Sidebar */
-    .sidebar {
-      width: 440px;
-      height: 100%;
-      background: var(--surface-card);
-      backdrop-filter: blur(24px);
-      border-left: 1px solid var(--surface-border);
-      display: flex;
-      flex-direction: column;
-      z-index: 50;
-      box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
-    }
-
-    .sidebar-header {
-      padding: 18px 20px;
-      border-bottom: 1px solid var(--surface-border);
-    }
-
-    .sidebar-header-top {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 12px;
-    }
-
-    .sidebar-header h2 {
-      font-size: 0.95rem;
-      font-weight: 800;
-      color: #fff;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    /* Bento Grid Metrics */
-    .bento-metrics {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 8px;
-    }
-
-    .bento-card {
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid var(--surface-border);
-      border-radius: 8px;
-      padding: 8px 10px;
-      text-align: center;
-      transition: all 0.2s;
-    }
-
-    .bento-card:hover {
-      background: rgba(255, 255, 255, 0.06);
-      border-color: rgba(255, 255, 255, 0.15);
-    }
-
-    .bento-card .val {
-      font-size: 1.25rem;
-      font-weight: 800;
-      font-family: var(--font-mono);
-      line-height: 1.2;
-    }
-
-    .bento-card .label {
-      font-size: 0.65rem;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      margin-top: 3px;
-    }
-
-    .val.green { color: var(--dlh-green); }
-    .val.red { color: var(--dlh-red); }
-    .val.amber { color: var(--dlh-amber); }
-    .val.cyan { color: var(--dlh-cyan); }
-
-    /* Scrollable Tab Content */
-    .sidebar-body {
-      flex: 1;
-      overflow-y: auto;
-      padding: 18px 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
-    }
-
-    .section-title {
-      font-size: 0.74rem;
-      font-weight: 800;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--text-muted);
-      margin-bottom: 10px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    /* Simulator Panel */
-    .sim-card {
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid var(--surface-border);
-      border-radius: 12px;
-      padding: 14px;
-    }
-
-    .sim-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 10px;
-    }
-
-    .sim-badge {
-      font-size: 0.68rem;
-      background: rgba(37, 211, 102, 0.15);
-      border: 1px solid rgba(37, 211, 102, 0.3);
-      color: #25d366;
-      padding: 2px 7px;
-      border-radius: 4px;
-      font-weight: 700;
-    }
-
-    .sim-triggers {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 6px;
-      margin-bottom: 10px;
-    }
-
-    .sim-btn {
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--surface-border);
-      color: #fff;
-      padding: 7px 10px;
-      border-radius: 6px;
-      font-size: 0.74rem;
-      font-weight: 600;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      transition: all 0.2s;
-    }
-
-    .sim-btn:hover {
-      background: rgba(239, 68, 68, 0.18);
-      border-color: rgba(239, 68, 68, 0.4);
-      color: #fca5a5;
-    }
-
-    .sim-input-row {
-      display: flex;
-      gap: 6px;
-    }
-
-    .sim-input {
-      flex: 1;
-      background: rgba(0, 0, 0, 0.4);
-      border: 1px solid var(--surface-border);
-      color: #fff;
-      padding: 7px 12px;
-      border-radius: 6px;
-      font-size: 0.78rem;
-      font-family: var(--font-mono);
-    }
-
-    .sim-input:focus {
-      outline: none;
-      border-color: var(--dlh-green);
-    }
-
-    .sim-send {
-      background: #25d366;
-      border: none;
-      color: #000;
-      padding: 7px 14px;
-      border-radius: 6px;
-      font-size: 0.78rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: opacity 0.2s;
-    }
-
-    .sim-send:hover {
-      opacity: 0.9;
-    }
-
-    /* Hubs List Cards */
-    .hub-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .hub-item {
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid var(--surface-border);
-      border-radius: 10px;
-      padding: 12px 14px;
-      cursor: pointer;
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .hub-item:hover {
-      background: var(--surface-card-hover);
-      border-color: rgba(255, 255, 255, 0.18);
-      transform: translateX(2px);
-    }
-
-    .hub-item.is-full {
-      border-left: 4px solid var(--dlh-red);
-      background: rgba(239, 68, 68, 0.05);
-    }
-
-    .hub-item.is-empty {
-      border-left: 4px solid var(--dlh-green);
-    }
-
-    .hub-top {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-    }
-
-    .hub-name {
-      font-size: 0.85rem;
-      font-weight: 700;
-      color: #fff;
-    }
-
-    .hub-coord {
-      font-size: 0.7rem;
-      color: var(--text-muted);
-      font-family: var(--font-mono);
-      margin-top: 2px;
-    }
-
-    .hub-badges {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .status-tag {
-      padding: 3px 8px;
-      border-radius: 4px;
-      font-size: 0.68rem;
-      font-weight: 800;
-      letter-spacing: 0.04em;
-    }
-
-    .status-tag.FULL {
-      background: rgba(239, 68, 68, 0.2);
-      border: 1px solid rgba(239, 68, 68, 0.4);
-      color: #f87171;
-    }
-
-    .status-tag.EMPTY {
-      background: rgba(16, 185, 129, 0.15);
-      border: 1px solid rgba(16, 185, 129, 0.35);
-      color: #34d399;
-    }
-
-    .pts-tag {
-      padding: 3px 7px;
-      border-radius: 4px;
-      font-size: 0.68rem;
-      font-weight: 700;
-      background: rgba(245, 158, 11, 0.15);
-      border: 1px solid rgba(245, 158, 11, 0.3);
-      color: #fbbf24;
-    }
-
-    .hub-bottom-actions {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding-top: 6px;
-      border-top: 1px solid var(--surface-border-subtle);
-    }
-
-    .dispatch-btn {
-      padding: 4px 10px;
-      border-radius: 5px;
-      font-size: 0.7rem;
-      font-weight: 700;
-      cursor: pointer;
-      border: none;
-      transition: all 0.2s;
-    }
-
-    .dispatch-btn.full-trigger {
-      background: rgba(239, 68, 68, 0.2);
-      color: #f87171;
-      border: 1px solid rgba(239, 68, 68, 0.3);
-    }
-
-    .dispatch-btn.full-trigger:hover {
-      background: var(--dlh-red);
-      color: #fff;
-    }
-
-    .dispatch-btn.reset-trigger {
-      background: rgba(16, 185, 129, 0.15);
-      color: #34d399;
-      border: 1px solid rgba(16, 185, 129, 0.3);
-    }
-
-    .dispatch-btn.reset-trigger:hover {
-      background: var(--dlh-green);
-      color: #000;
-    }
-
-    /* Live Activity Feed */
-    .activity-feed {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      max-height: 180px;
-      overflow-y: auto;
-    }
-
-    .activity-row {
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid var(--surface-border-subtle);
-      border-radius: 6px;
-      padding: 8px 10px;
-      font-size: 0.72rem;
-      line-height: 1.4;
-      display: flex;
-      gap: 8px;
-    }
-
-    .activity-time {
-      font-family: var(--font-mono);
-      color: var(--text-muted);
-      font-size: 0.65rem;
+      gap: 14px;
+      padding: 8px 8px 8px 10px;
+      border-radius: 999px;
+      background: var(--glass-strong);
       white-space: nowrap;
     }
 
-    /* Map Markers */
-    .mapboxgl-marker {
-      /* Vital: ensure Mapbox coordinate transform is strictly preserved without browser box-sizing distortion */
-      box-sizing: content-box !important;
-    }
+    .island-brand { display: flex; align-items: center; gap: 10px; }
 
-    .custom-marker {
-      width: 32px;
-      height: 32px;
-      cursor: pointer;
-      position: relative;
-      user-select: none;
-      display: block;
-    }
-
-    .marker-beacon {
-      width: 32px;
-      height: 32px;
+    .brand-mark {
+      width: 34px;
+      height: 34px;
       border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 14px;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at 30% 25%, rgba(34, 211, 238, 0.35), rgba(16, 185, 129, 0.12) 60%, transparent 75%), #0E1118;
+      border: 1px solid rgba(34, 211, 238, 0.25);
+      color: var(--cyan);
+    }
+    .brand-mark svg { width: 18px; height: 18px; }
+
+    .brand-text h1 {
+      font-size: 0.82rem;
       font-weight: 800;
-      color: #fff;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+    }
+    .brand-text h1 span { color: var(--muted); font-weight: 600; }
+    .brand-text p {
+      font-size: 0.64rem;
+      color: var(--dim);
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    .island-sep { width: 1px; height: 24px; background: var(--stroke); }
+
+    .live-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--stroke);
+      font-size: 0.66rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    .socket-dot {
       position: relative;
-      z-index: 2;
-      transition: transform 0.15s ease-out;
-    }
-
-    .custom-marker:hover .marker-beacon {
-      transform: scale(1.15);
-    }
-
-    .marker-empty .marker-beacon {
-      background: linear-gradient(135deg, #10b981, #047857);
-      border: 2px solid #a7f3d0;
-      box-shadow: 0 0 14px var(--dlh-green-glow);
-    }
-
-    .marker-full .marker-beacon {
-      background: linear-gradient(135deg, #ef4444, #b91c1c);
-      border: 2px solid #fecaca;
-      box-shadow: 0 0 20px var(--dlh-red-glow);
-    }
-
-    .marker-ripple {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 32px;
-      height: 32px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
-      background: rgba(239, 68, 68, 0.45);
-      opacity: 0;
-      pointer-events: none;
-      animation: rippleAnim 1.8s infinite;
-      display: none;
-      z-index: 1;
+      background: var(--dim);
     }
-
-    .marker-full .marker-ripple {
-      display: block;
-    }
-
-    @keyframes rippleAnim {
-      0% { transform: scale(1); opacity: 0.9; }
-      100% { transform: scale(2.5); opacity: 0; }
-    }
-
-    /* Mapbox Popup Overrides */
-    .mapboxgl-popup-content {
-      background: #0f172a !important;
-      color: #fff !important;
-      border-radius: 10px !important;
-      padding: 12px 14px !important;
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6) !important;
-      border: 1px solid var(--surface-border) !important;
-      font-family: var(--font-family) !important;
-      max-width: 250px !important;
-    }
-
-    .mapboxgl-popup-close-button { color: #94a3b8 !important; }
-
-    /* Toast Notification */
-    #toast-container {
+    .socket-dot.connected { background: var(--emerald); box-shadow: 0 0 10px var(--emerald); }
+    .socket-dot.connected::after {
+      content: '';
       position: absolute;
-      top: 76px;
-      right: 460px;
-      z-index: 200;
+      inset: -4px;
+      border-radius: 50%;
+      border: 1px solid var(--emerald);
+      animation: livePing 2s ease-out infinite;
+    }
+    .live-pill.is-live { color: #A7F3D0; border-color: rgba(16, 185, 129, 0.25); background: var(--emerald-soft); }
+
+    @keyframes livePing {
+      0% { transform: scale(0.6); opacity: 0.9; }
+      100% { transform: scale(1.9); opacity: 0; }
+    }
+
+    .island-actions { display: flex; gap: 6px; }
+
+    .island-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      height: 34px;
+      padding: 0 14px;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 600;
+      color: #D7DCE6;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--stroke);
+      transition: background 0.25s, border-color 0.25s, color 0.25s;
+      will-change: transform;
+    }
+    .island-btn:hover { background: rgba(255, 255, 255, 0.09); border-color: var(--stroke-hi); color: #fff; }
+    .island-btn.primary {
+      background: linear-gradient(135deg, rgba(34, 211, 238, 0.22), rgba(16, 185, 129, 0.18));
+      border-color: rgba(34, 211, 238, 0.35);
+      color: #E6FBFF;
+    }
+    .island-btn.primary:hover { background: linear-gradient(135deg, rgba(34, 211, 238, 0.32), rgba(16, 185, 129, 0.26)); }
+    .island-btn.icon-only { width: 40px; padding: 0; justify-content: center; font-size: 0.68rem; font-weight: 700; }
+
+    /* =========================================================
+       5. LEFT FLOATING BENTO HUD
+       ========================================================= */
+    .hud-left {
+      position: fixed;
+      top: var(--top-offset);
+      left: var(--gap);
+      width: var(--hud-w);
+      max-height: calc(100vh - var(--top-offset) - 120px);
+      z-index: 10;
       display: flex;
       flex-direction: column;
+      gap: 10px;
+      overflow-y: auto;
+      scrollbar-width: none;
+      transition: width 0.45s var(--ease-spring);
+    }
+    .hud-left::-webkit-scrollbar { display: none; }
+
+    .hud-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 12px 12px 16px;
+      border-radius: var(--r-md);
+    }
+    .hud-title { display: block; font-size: 0.86rem; font-weight: 700; letter-spacing: -0.03em; margin-top: 2px; }
+
+    #btn-hud-toggle svg { transition: transform 0.45s var(--ease-spring); }
+    .hud-left.is-collapsed #btn-hud-toggle svg { transform: rotate(180deg); }
+    .hud-left.is-collapsed { width: 64px; }
+    .hud-left.is-collapsed .hud-head > div,
+    .hud-left.is-collapsed .hud-cards,
+    .hud-left.is-collapsed .legend { display: none; }
+    .hud-left.is-collapsed .hud-head { padding: 12px; justify-content: center; }
+
+    .hud-cards { display: flex; flex-direction: column; gap: 10px; }
+
+    .kpi {
+      padding: 16px;
+      border-radius: var(--r-md);
+      overflow: hidden;
+    }
+    .kpi:hover { background: var(--glass-hover); box-shadow: 0 18px 50px -18px rgba(0, 0, 0, 0.7), inset 0 0 28px rgba(34, 211, 238, 0.05); }
+
+    .kpi-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+
+    .kpi-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+      display: grid;
+      place-items: center;
+    }
+    .kpi-icon.emerald { color: var(--emerald); background: var(--emerald-soft); }
+    .kpi-icon.cyan { color: var(--cyan); background: var(--cyan-soft); }
+    .kpi-icon.amber { color: var(--amber); background: var(--amber-soft); }
+
+    .kpi-tag {
+      font-size: 0.6rem;
+      font-weight: 600;
+      color: var(--muted);
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--stroke);
+    }
+
+    .kpi-value {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+      font-family: var(--mono);
+      font-size: 1.9rem;
+      font-weight: 600;
+      letter-spacing: -0.05em;
+      line-height: 1;
+    }
+    .kpi-value small { font-size: 0.9rem; color: var(--muted); font-weight: 500; letter-spacing: -0.02em; }
+    .kpi-value em { font-style: normal; font-size: 0.72rem; color: var(--dim); margin-left: 6px; letter-spacing: -0.01em; }
+
+    .kpi-label { margin-top: 10px; font-size: 0.8rem; font-weight: 700; letter-spacing: -0.02em; }
+    .kpi-sub { margin-top: 3px; font-size: 0.7rem; color: var(--muted); line-height: 1.45; }
+
+    .kpi-live { border-color: rgba(34, 211, 238, 0.14); }
+    .kpi-live .route-grid {
+      display: grid;
+      grid-template-columns: 1.3fr 1fr 0.8fr;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .route-cell { padding: 10px; border-radius: var(--r-sm); background: rgba(255, 255, 255, 0.025); border: 1px solid rgba(255, 255, 255, 0.04); }
+    .route-cell .num { font-family: var(--mono); font-size: 1.05rem; font-weight: 600; letter-spacing: -0.04em; }
+    .route-cell .num small { font-size: 0.62rem; color: var(--muted); margin-left: 2px; }
+    .route-cell label { display: block; margin-top: 2px; font-size: 0.6rem; color: var(--dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; }
+
+    .route-order {
+      margin-top: 10px;
+      font-size: 0.66rem;
+      color: var(--muted);
+      line-height: 1.5;
+      word-break: break-word;
+    }
+    .route-order b { color: var(--cyan); font-weight: 600; }
+
+    .legend {
+      padding: 12px 14px;
+      border-radius: var(--r-md);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 10px;
+      font-size: 0.66rem;
+      color: var(--muted);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .legend-dot.emerald { background: var(--emerald); box-shadow: 0 0 8px var(--emerald); }
+    .legend-dot.coral { background: var(--coral); box-shadow: 0 0 8px var(--coral); }
+    .legend-dot.cyan { width: 14px; height: 3px; border-radius: 2px; background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+    .legend-dot.amber { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+
+    /* =========================================================
+       6. RIGHT COLLAPSIBLE DRAWER
+       ========================================================= */
+    .drawer {
+      position: fixed;
+      top: var(--top-offset);
+      right: var(--gap);
+      bottom: var(--gap);
+      width: var(--drawer-w);
+      z-index: 10;
+      border-radius: var(--r-lg);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: transform 0.55s var(--ease-spring), opacity 0.35s ease;
+    }
+    .drawer.is-closed { transform: translateX(calc(100% + 32px)); opacity: 0; pointer-events: none; }
+
+    .drawer-handle { display: none; }
+
+    .drawer-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      padding: 18px 16px 12px 20px;
+    }
+    .drawer-head h2 { font-size: 1rem; font-weight: 800; letter-spacing: -0.03em; margin-top: 3px; }
+
+    .stat-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      padding: 0 16px 14px;
+    }
+    .stat {
+      padding: 10px 8px;
+      border-radius: var(--r-sm);
+      background: rgba(255, 255, 255, 0.025);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      text-align: center;
+    }
+    .stat span { display: block; font-family: var(--mono); font-size: 1.15rem; font-weight: 600; letter-spacing: -0.04em; }
+    .stat label { display: block; margin-top: 2px; font-size: 0.58rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
+    .stat.coral span { color: #FCA5A5; }
+    .stat.emerald span { color: #6EE7B7; }
+    .stat.amber span { color: var(--amber); }
+
+    .drawer-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 16px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      border-top: 1px solid var(--stroke);
+      padding-top: 14px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      font-size: 0.66rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .section-head .mono { letter-spacing: 0; text-transform: none; color: var(--dim); font-weight: 500; }
+
+    /* Hub items */
+    .hub-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .hub-item {
+      position: relative;
+      display: grid;
+      grid-template-columns: 34px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px;
+      border-radius: var(--r-md);
+      background: rgba(255, 255, 255, 0.022);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      cursor: pointer;
+      transition: background 0.25s, border-color 0.25s, transform 0.4s var(--ease-spring);
+    }
+    .hub-item:hover { background: rgba(255, 255, 255, 0.045); border-color: var(--stroke-hi); transform: translateX(-2px); }
+    .hub-item.is-full { border-color: rgba(239, 68, 68, 0.22); background: linear-gradient(90deg, rgba(239, 68, 68, 0.07), rgba(255, 255, 255, 0.015) 60%); }
+
+    .hub-index {
+      position: relative;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .is-empty .hub-index { background: radial-gradient(circle at 35% 30%, #34D399, #047857); box-shadow: 0 0 16px rgba(16, 185, 129, 0.35); }
+    .is-full .hub-index { background: radial-gradient(circle at 35% 30%, #F87171, #B91C1C); box-shadow: 0 0 18px rgba(239, 68, 68, 0.5); }
+    .is-full .hub-index::after {
+      content: '';
+      position: absolute;
+      inset: -5px;
+      border-radius: 50%;
+      border: 1.5px solid var(--coral);
+      animation: livePing 1.8s ease-out infinite;
+    }
+
+    .hub-main { min-width: 0; }
+    .hub-name {
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .hub-coord { font-family: var(--mono); font-size: 0.62rem; color: var(--dim); margin-top: 2px; }
+
+    .hub-bar {
+      height: 4px;
+      margin-top: 8px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+    }
+    .hub-bar span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--amber), #FDE68A);
+      transition: width 0.9s var(--ease-spring);
+    }
+    .hub-points { margin-top: 5px; font-family: var(--mono); font-size: 0.62rem; color: var(--muted); }
+    .hub-points b { color: var(--amber); font-weight: 600; }
+
+    .hub-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+
+    .pill {
+      font-family: var(--mono);
+      font-size: 0.56rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      padding: 4px 8px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .pill.EMPTY { color: #6EE7B7; background: var(--emerald-soft); border: 1px solid rgba(16, 185, 129, 0.28); }
+    .pill.FULL { color: #FCA5A5; background: var(--coral-soft); border: 1px solid rgba(239, 68, 68, 0.32); }
+
+    .hub-action {
+      font-size: 0.64rem;
+      font-weight: 700;
+      padding: 6px 10px;
+      border-radius: 8px;
+      transition: background 0.2s, color 0.2s, transform 0.3s var(--ease-spring);
+    }
+    .hub-action:active { transform: scale(0.94); }
+    .hub-action.report { color: #FCA5A5; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); }
+    .hub-action.report:hover { background: var(--coral); color: #fff; }
+    .hub-action.done { color: #6EE7B7; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.28); }
+    .hub-action.done:hover { background: var(--emerald); color: #04130D; }
+
+    /* Fold sections (simulator & log) */
+    .fold {
+      border-radius: var(--r-md);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      background: rgba(255, 255, 255, 0.018);
+    }
+    .fold summary {
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 14px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      cursor: pointer;
+      user-select: none;
+    }
+    .fold summary::-webkit-details-marker { display: none; }
+    .fold summary .chip {
+      margin-left: auto;
+      font-size: 0.58rem;
+      font-weight: 500;
+      color: var(--dim);
+      padding: 3px 7px;
+      border-radius: 6px;
+      border: 1px solid var(--stroke);
+    }
+    .fold summary .chev { color: var(--dim); transition: transform 0.35s var(--ease-spring); }
+    .fold[open] summary .chev { transform: rotate(180deg); }
+    .fold-body { padding: 0 14px 14px; }
+
+    .sim-triggers { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+    .sim-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 9px 10px;
+      border-radius: 10px;
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: #D7DCE6;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--stroke);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .sim-btn:hover { background: var(--coral-soft); border-color: rgba(239, 68, 68, 0.35); }
+    .sim-btn .mono { color: var(--coral); font-size: 0.62rem; }
+
+    .sim-input-row { display: flex; gap: 6px; }
+    .sim-input {
+      flex: 1;
+      min-width: 0;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--stroke);
+      background: rgba(0, 0, 0, 0.35);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 0.74rem;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .sim-input:focus { border-color: rgba(34, 211, 238, 0.45); box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.12); }
+    .sim-send {
+      width: 40px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      color: #04130D;
+      background: linear-gradient(135deg, var(--emerald), #34D399);
+    }
+
+    .activity-feed { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+    .activity-row {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.02);
+      font-size: 0.68rem;
+      line-height: 1.45;
+      color: #C9D1E0;
+    }
+    .activity-time { font-family: var(--mono); font-size: 0.6rem; color: var(--dim); padding-top: 1px; }
+    .activity-row b.full { color: #FCA5A5; }
+    .activity-row b.empty { color: #6EE7B7; }
+
+    .drawer-reopen {
+      position: fixed;
+      top: var(--top-offset);
+      right: var(--gap);
+      z-index: 9;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      height: 42px;
+      padding: 0 14px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .drawer-reopen.is-visible { display: inline-flex; }
+    .drawer-reopen .count {
+      font-family: var(--mono);
+      font-size: 0.66rem;
+      color: #FCA5A5;
+      background: var(--coral-soft);
+      padding: 2px 7px;
+      border-radius: 999px;
+    }
+
+    /* =========================================================
+       7. DYNAMIC ISLAND TOASTS
+       ========================================================= */
+    #toast-container {
+      position: fixed;
+      bottom: 26px;
+      left: calc(var(--hud-w) + var(--gap) * 2);
+      right: calc(var(--drawer-w) + var(--gap) * 2);
+      z-index: 30;
+      display: flex;
+      flex-direction: column-reverse;
+      align-items: center;
       gap: 8px;
       pointer-events: none;
     }
 
     .toast {
-      background: rgba(15, 23, 42, 0.95);
-      border: 1px solid var(--surface-border);
-      border-left: 4px solid var(--dlh-red);
-      color: #fff;
-      padding: 10px 14px;
-      border-radius: 8px;
-      font-size: 0.78rem;
+      position: relative;
+      pointer-events: auto;
       display: flex;
       align-items: center;
-      gap: 10px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-      animation: toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      gap: 12px;
+      width: min(440px, 100%);
+      padding: 10px 16px 10px 10px;
+      border-radius: 999px;
+      background: rgba(6, 7, 11, 0.92);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid var(--stroke-hi);
+      box-shadow: 0 24px 60px -16px rgba(0, 0, 0, 0.85);
+      overflow: hidden;
+    }
+    .toast-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+    }
+    .toast.alert .toast-icon { background: var(--coral-soft); color: #FCA5A5; box-shadow: 0 0 18px rgba(239, 68, 68, 0.35); }
+    .toast.ok .toast-icon { background: var(--emerald-soft); color: #6EE7B7; }
+    .toast.info .toast-icon { background: var(--cyan-soft); color: var(--cyan); }
+    .toast-body { min-width: 0; flex: 1; }
+    .toast-title { display: flex; justify-content: space-between; gap: 8px; font-size: 0.74rem; font-weight: 700; letter-spacing: -0.02em; }
+    .toast-title .mono { font-size: 0.6rem; color: var(--dim); font-weight: 500; }
+    .toast-text { font-size: 0.68rem; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+    .toast-text b { color: var(--text); }
+    .toast-progress {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      height: 2px;
+      width: 100%;
+      transform-origin: left;
+      background: linear-gradient(90deg, var(--cyan), var(--emerald));
+      opacity: 0.6;
+    }
+    .toast.alert .toast-progress { background: linear-gradient(90deg, var(--coral), var(--amber)); }
+
+    /* =========================================================
+       8. MAPBOX OVERRIDES
+       ========================================================= */
+    .mapboxgl-ctrl-group {
+      background: var(--glass-strong) !important;
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--stroke) !important;
+      border-radius: 12px !important;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.7) !important;
+      overflow: hidden;
+    }
+    .mapboxgl-ctrl-group button + button { border-top: 1px solid var(--stroke) !important; }
+    .mapboxgl-ctrl-group button .mapboxgl-ctrl-icon { filter: invert(0.85); }
+    .mapboxgl-ctrl-bottom-left { margin-bottom: 6px; margin-left: 6px; }
+    .mapboxgl-ctrl-attrib.mapboxgl-compact { background: rgba(12, 14, 20, 0.6) !important; }
+    .mapboxgl-ctrl-attrib a { color: var(--dim) !important; }
+
+    .hub-popup .mapboxgl-popup-content {
+      background: rgba(10, 12, 18, 0.94) !important;
+      backdrop-filter: blur(20px);
+      color: var(--text);
+      border: 1px solid var(--stroke-hi);
+      border-radius: 16px !important;
+      padding: 14px !important;
+      box-shadow: 0 24px 60px -16px rgba(0, 0, 0, 0.85) !important;
+      font-family: var(--font);
+      min-width: 220px;
+    }
+    .hub-popup .mapboxgl-popup-tip { display: none; }
+    .pop-title { font-size: 0.82rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 8px; }
+    .pop-row { display: flex; justify-content: space-between; gap: 12px; font-size: 0.68rem; color: var(--muted); margin-top: 4px; }
+    .pop-row .mono { color: var(--text); }
+    .pop-btn {
+      width: 100%;
+      margin-top: 12px;
+      padding: 9px;
+      border-radius: 10px;
+      font-size: 0.7rem;
+      font-weight: 700;
+    }
+    .pop-btn.report { background: var(--coral); color: #fff; }
+    .pop-btn.done { background: var(--emerald); color: #04130D; }
+
+    /* =========================================================
+       9. RESPONSIVE (Laptop small → Mobile)
+       ========================================================= */
+    @media (max-width: 1180px) {
+      :root { --drawer-w: 360px; --hud-w: 270px; }
+      .island-btn span.lbl { display: none; }
+      .island-btn { padding: 0 11px; }
     }
 
-    @keyframes toastIn {
-      from { opacity: 0; transform: translateY(-10px); }
-      to { opacity: 1; transform: translateY(0); }
+    @media (max-width: 820px) {
+      :root { --top-offset: 70px; }
+
+      .island {
+        top: 10px;
+        left: 10px;
+        right: 10px;
+        transform: none;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 6px 6px 6px 8px;
+      }
+      .brand-text p, .island-sep { display: none; }
+      .brand-text h1 { font-size: 0.72rem; }
+      .brand-text h1 span { display: none; }
+      .live-pill { padding: 6px 9px; }
+      .island-btn { height: 32px; padding: 0 10px; }
+      #btn-focus { display: none; }
+
+      .hud-left {
+        top: var(--top-offset);
+        left: 0;
+        right: 0;
+        width: 100% !important;
+        max-height: none;
+        flex-direction: row;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 0 10px 6px;
+        scroll-snap-type: x mandatory;
+      }
+      .hud-head, .legend { display: none !important; }
+      .hud-cards { flex-direction: row; gap: 8px; display: flex !important; }
+      .kpi { min-width: 206px; padding: 12px; scroll-snap-align: start; }
+      .kpi-top { margin-bottom: 8px; }
+      .kpi-value { font-size: 1.4rem; }
+      .kpi-sub { display: none; }
+      .kpi-live { min-width: 260px; }
+
+      .drawer {
+        top: auto;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        height: 54vh;
+        border-radius: 24px 24px 0 0;
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      .drawer.is-closed { transform: translateY(calc(100% - 132px)); opacity: 1; pointer-events: auto; }
+      .drawer-handle {
+        display: flex;
+        justify-content: center;
+        padding: 10px 0 2px;
+        cursor: pointer;
+      }
+      .drawer-handle span { width: 40px; height: 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.2); }
+      .drawer-head { padding: 6px 14px 10px 18px; }
+      #btn-drawer-toggle { display: none; }
+      .drawer-reopen { display: none !important; }
+
+      #toast-container { left: 10px; right: 10px; top: 168px; bottom: auto; flex-direction: column; }
+      .toast { border-radius: 20px; }
+
+      .mapboxgl-ctrl-bottom-left .mapboxgl-ctrl-group { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
     }
   </style>
 </head>
 <body>
+  <!-- ======================= MAP CANVAS ======================= -->
+  <div id="map" role="application" aria-label="Peta 3D rute armada sampah DLH Banyuwangi"></div>
+  <div class="vignette" aria-hidden="true"></div>
 
-  <!-- Top Command Header -->
-  <header>
-    <div class="brand">
-      <div class="brand-badge">DLH BANYUWANGI</div>
-      <div>
-        <div class="brand-title">
-          <span>🌿 Smart Waste Dispatcher</span>
-          <span style="font-size:0.75rem; color:#94a3b8; font-weight:500;">| Command Center</span>
-        </div>
-        <div class="brand-subtitle">Pemantauan Micro-Hub & Dynamic Routing Armada Truk DLH</div>
+  <!-- ======================= TOP DYNAMIC ISLAND ======================= -->
+  <header class="island glass" id="island">
+    <div class="island-brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="18" r="2.2"/><circle cx="19" cy="18" r="2.2"/>
+          <path d="M12 7.2v4.3M10.6 12.8 6.6 16.3M13.4 12.8l4 3.5"/><circle cx="12" cy="12.4" r="1.3" fill="currentColor"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <h1>SMART-NODE <span>LOGISTICS</span></h1>
+        <p>IEFC ITB · DLH BANYUWANGI</p>
       </div>
     </div>
 
-    <div class="header-actions">
-      <button class="quick-route-btn" onclick="focusFullHubs()">
-        <span>🚛</span> Fokus Rute Aktif
-      </button>
+    <div class="island-sep" aria-hidden="true"></div>
 
-      <div class="socket-status" id="socket-status">
-        <div class="socket-dot" id="socket-dot"></div>
-        <span id="socket-text">Terhubung</span>
-      </div>
+    <div class="live-pill" id="socket-status" aria-live="polite">
+      <span class="socket-dot" id="socket-dot"></span>
+      <span class="mono" id="socket-text">CONNECTING</span>
+    </div>
+
+    <div class="island-actions">
+      <button class="island-btn primary magnetic" id="btn-simulate" onclick="simulateRandomReport()" title="Simulasikan laporan WhatsApp PENUH dari klaster acak">
+        <i data-lucide="zap"></i><span class="lbl">Simulate</span>
+      </button>
+      <button class="island-btn magnetic" id="btn-reset" onclick="resetAllHubs()" title="Tandai semua klaster selesai dijemput">
+        <i data-lucide="rotate-ccw"></i><span class="lbl">Reset Route</span>
+      </button>
+      <button class="island-btn magnetic" id="btn-focus" onclick="focusFullHubs()" title="Fokuskan kamera ke rute aktif">
+        <i data-lucide="crosshair"></i><span class="lbl">Fokus</span>
+      </button>
+      <button class="island-btn icon-only magnetic" id="btn-view" onclick="toggleViewMode()" title="Ganti tampilan 2D / 3D">
+        <span class="mono" id="view-label">3D</span>
+      </button>
     </div>
   </header>
 
-  <!-- Dashboard Layout -->
-  <div class="dashboard-layout">
-    <!-- Map Container -->
-    <div id="map-container">
-      <div id="map"></div>
-
-      <!-- Map Overlay Legend -->
-      <div class="map-overlay-legend">
-        <div style="font-weight: 800; font-size: 0.7rem; color: #94a3b8; margin-bottom: 2px;">STATUS NODE LOGISTIK</div>
-        <div class="legend-item">
-          <div class="legend-dot red"></div>
-          <span><strong>PENUH</strong> &bull; Prioritas Jemput Truk DLH</span>
-        </div>
-        <div class="legend-item">
-          <div class="legend-dot green"></div>
-          <span><strong>KOSONG</strong> &bull; Kapasitas Aman (Lewati)</span>
-        </div>
-        <div class="legend-item">
-          <div class="legend-dot cyan"></div>
-          <span><strong>RUTE BIRU</strong> &bull; Jalur Truk Efisien</span>
-        </div>
+  <!-- ======================= LEFT BENTO HUD ======================= -->
+  <aside class="hud-left" id="hud-left" aria-label="Metrik eksekutif">
+    <div class="hud-head glass">
+      <div>
+        <span class="eyebrow">Executive Metrics</span>
+        <span class="hud-title">Triple Bottom Line</span>
       </div>
+      <button class="icon-btn" id="btn-hud-toggle" onclick="toggleHud()" aria-label="Ciutkan / buka panel metrik">
+        <i data-lucide="chevron-left"></i>
+      </button>
     </div>
 
-    <!-- Toast Notifications -->
-    <div id="toast-container"></div>
+    <div class="hud-cards" id="hud-cards">
+      <article class="kpi glass" id="kpi-stop-density">
+        <div class="kpi-top">
+          <span class="kpi-icon emerald"><i data-lucide="layers"></i></span>
+          <span class="kpi-tag mono">3 : 1</span>
+        </div>
+        <div class="kpi-value"><span data-count="66.7" data-decimals="1">0.0</span><small>%</small></div>
+        <div class="kpi-label">Stop Density Reduction</div>
+        <div class="kpi-sub">Konsolidasi 3 rumah → 1 Micro-Hub komunal</div>
+      </article>
 
-    <!-- DLH Dispatcher Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <div class="sidebar-header-top">
-          <h2>📊 Ringkasan Operasional DLH</h2>
-          <span style="font-size: 0.7rem; color: #34d399; font-weight: 700;">Live Real-time</span>
+      <article class="kpi glass" id="kpi-fuel">
+        <div class="kpi-top">
+          <span class="kpi-icon cyan"><i data-lucide="fuel"></i></span>
+          <span class="kpi-tag mono">DVRP</span>
         </div>
-        
-        <!-- Bento Grid Metrics -->
-        <div class="bento-metrics">
-          <div class="bento-card">
-            <div class="val" id="metric-total">4</div>
-            <div class="label">Total Node</div>
-          </div>
-          <div class="bento-card">
-            <div class="val red" id="metric-full">2</div>
-            <div class="label">Penuh</div>
-          </div>
-          <div class="bento-card">
-            <div class="val green" id="metric-empty">2</div>
-            <div class="label">Aman</div>
-          </div>
-          <div class="bento-card">
-            <div class="val amber" id="metric-points">120</div>
-            <div class="label">Poin Warga</div>
-          </div>
+        <div class="kpi-value">−<span data-count="21.5" data-decimals="1">0.0</span><small>%</small><em class="mono">s/d −30%</em></div>
+        <div class="kpi-label">Route &amp; Fuel Efficiency</div>
+        <div class="kpi-sub">Nearest Neighbor + 2-Opt Dynamic Routing</div>
+      </article>
+
+      <article class="kpi glass" id="kpi-anaerobic">
+        <div class="kpi-top">
+          <span class="kpi-icon amber"><i data-lucide="timer"></i></span>
+          <span class="kpi-tag mono">ZERO CH₄</span>
         </div>
+        <div class="kpi-value">&lt;<span data-count="24" data-decimals="0">0</span><small>Jam</small></div>
+        <div class="kpi-label">Anaerobic Window Guard</div>
+        <div class="kpi-sub">Bypass organik langsung ke Maggot BSF</div>
+      </article>
+
+      <article class="kpi kpi-live glass" id="kpi-route">
+        <div class="kpi-top">
+          <span class="kpi-icon cyan"><i data-lucide="navigation"></i></span>
+          <span class="kpi-tag mono" id="route-source">STANDBY</span>
+        </div>
+        <div class="kpi-label" style="margin: 0 0 8px;">Rute Armada Aktif</div>
+        <div class="route-grid">
+          <div class="route-cell"><div class="num"><span id="route-distance">0.0</span><small>km</small></div><label>Jarak</label></div>
+          <div class="route-cell"><div class="num"><span id="route-eta">0</span><small>mnt</small></div><label>ETA</label></div>
+          <div class="route-cell"><div class="num"><span id="route-stops">0</span></div><label>Stop</label></div>
+        </div>
+        <div class="route-order mono" id="route-order">Semua klaster aman — armada standby.</div>
+      </article>
+    </div>
+
+    <div class="legend glass" aria-label="Legenda peta">
+      <div class="legend-item"><span class="legend-dot emerald"></span>EMPTY</div>
+      <div class="legend-item"><span class="legend-dot coral"></span>NEEDS COLLECTION</div>
+      <div class="legend-item"><span class="legend-dot cyan"></span>Rute DVRP</div>
+      <div class="legend-item"><span class="legend-dot amber"></span>Depo / Maggot BSF</div>
+    </div>
+  </aside>
+
+  <!-- ======================= RIGHT DRAWER ======================= -->
+  <aside class="drawer glass" id="drawer" aria-label="Status Micro-Hub dan Retribution Ledger">
+    <div class="drawer-handle" onclick="toggleDrawer()" aria-hidden="true"><span></span></div>
+
+    <div class="drawer-head">
+      <div>
+        <span class="eyebrow">Micro-Hub Network</span>
+        <h2>Status &amp; Retribution Ledger</h2>
       </div>
+      <button class="icon-btn" id="btn-drawer-toggle" onclick="toggleDrawer()" aria-label="Tutup panel">
+        <i data-lucide="x"></i>
+      </button>
+    </div>
 
-      <div class="sidebar-body">
-        <!-- WhatsApp Webhook Simulator Box -->
-        <div>
-          <div class="section-title">
-            <span>Simulator WhatsApp Bot Warga</span>
-            <span class="sim-badge">POST /webhook/whatsapp</span>
-          </div>
-          <div class="sim-card">
-            <div class="sim-header">
-              <span style="font-size: 0.75rem; font-weight: 600; color: #e2e8f0;">Laporan Human-as-a-Sensor</span>
-              <span style="font-size: 0.68rem; color: var(--text-muted);">Biaya Hardware Rp 0</span>
-            </div>
-            
-            <div class="sim-triggers" id="sim-triggers-container">
-              <!-- Dynamically filled with quick trigger buttons -->
-            </div>
+    <div class="stat-row">
+      <div class="stat"><span id="metric-total">0</span><label>Node</label></div>
+      <div class="stat coral"><span id="metric-full">0</span><label>Penuh</label></div>
+      <div class="stat emerald"><span id="metric-empty">0</span><label>Aman</label></div>
+      <div class="stat amber"><span id="metric-points">0</span><label>Poin</label></div>
+    </div>
 
-            <div class="sim-input-row">
-              <input type="text" id="sim-custom-input" class="sim-input" placeholder="Contoh: PENUH 1 atau KOSONG 1" value="PENUH 1" />
-              <button class="sim-send" onclick="sendCustomSimulator()">Kirim</button>
-            </div>
+    <div class="drawer-body">
+      <section>
+        <div class="section-head">
+          <span>Klaster 3 Rumah</span>
+          <span class="mono">+10 pt ÷ 3 rumah / laporan</span>
+        </div>
+        <div class="hub-list" id="hub-list-container"></div>
+      </section>
+
+      <details class="fold" id="fold-sim">
+        <summary>
+          <i data-lucide="message-square"></i> Simulator WhatsApp
+          <span class="chip mono">POST /webhook/whatsapp</span>
+          <i data-lucide="chevron-down" class="chev"></i>
+        </summary>
+        <div class="fold-body">
+          <div class="sim-triggers" id="sim-triggers-container"></div>
+          <div class="sim-input-row">
+            <input type="text" id="sim-custom-input" class="sim-input" placeholder="PENUH 1 / KOSONG 1" value="PENUH 1" autocomplete="off" />
+            <button class="sim-send" id="btn-sim-send" onclick="sendCustomSimulator()" aria-label="Kirim pesan simulasi"><i data-lucide="send"></i></button>
           </div>
         </div>
+      </details>
 
-        <!-- Micro-Hub List -->
-        <div>
-          <div class="section-title">
-            <span>Daftar Micro-Hub & Klaster Rumah</span>
-            <span style="color: var(--dlh-cyan); font-weight: 700; font-size: 0.7rem;">Banyuwangi DLH Node</span>
-          </div>
-          <div class="hub-list" id="hub-list-container">
-            <!-- Rendered dynamically -->
-          </div>
-        </div>
-
-        <!-- Activity Feed -->
-        <div>
-          <div class="section-title">
-            <span>Log Aktivitas Armada & Laporan</span>
-            <span style="font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono);">WebSocket</span>
-          </div>
+      <details class="fold" id="fold-log">
+        <summary>
+          <i data-lucide="activity"></i> Log Aktivitas
+          <span class="chip mono">WebSocket</span>
+          <i data-lucide="chevron-down" class="chev"></i>
+        </summary>
+        <div class="fold-body">
           <div class="activity-feed" id="activity-feed">
             <div class="activity-row">
-              <div class="activity-time">00:00</div>
-              <div>Sistem Dispatcher DLH siap memantau rute dinamis.</div>
+              <div class="activity-time">--:--</div>
+              <div>Dispatcher siap memantau laporan warga.</div>
             </div>
           </div>
         </div>
-      </div>
-    </aside>
-  </div>
+      </details>
+    </div>
+  </aside>
+
+  <button class="drawer-reopen glass" id="drawer-reopen" onclick="toggleDrawer()" aria-label="Buka panel Micro-Hub">
+    <i data-lucide="panel-right-open"></i> Micro-Hub <span class="count" id="reopen-count">0</span>
+  </button>
+
+  <!-- ======================= TOASTS ======================= -->
+  <div id="toast-container" aria-live="polite"></div>
 
   <script>
-    // ----------------------------------------------------
+    // =========================================================
     // 1. CONFIGURATION & STATE
-    // ----------------------------------------------------
+    // =========================================================
     const MAPBOX_TOKEN = 'pk.eyJ1Ijoib3Bla2RldjEyIiwiYSI6ImNtdjU0Y3Y0ZTAxZ3Myd3NldDd6YjJ0M3QifQ.I2J71Wfbm7fA3YQ-bmbaow';
     mapboxgl.accessToken = MAPBOX_TOKEN;
 
-    // Banyuwangi Center Coordinates
-    const BANYUWANGI_CENTER = [114.3645, -8.2165];
+    const BANYUWANGI_CENTER = [114.3660, -8.2200];
+
+    // Route start/end anchors (demo coordinates — adjust to real DLH depot & BSF facility)
+    const DEPOT = { label: 'DEPO DLH', coord: [114.3528, -8.2105] };
+    const BSF_FACILITY = { label: 'MAGGOT BSF', coord: [114.3672, -8.2378] };
+
+    const VIEW_3D = { pitch: 55, bearing: -15 };
+    const VIEW_2D = { pitch: 0, bearing: 0 };
+    const TRUCK_SPEED_KMH = 25; // used only for straight-line ETA fallback
 
     let map = null;
+    let mapReady = false;
     let hubsData = [];
-    const markersMap = {};
+    let viewMode = '3d';
+    let activePopup = null;
+    let activePopupHubId = null;
+    let routeRequestId = 0;
+    let lastRouteCoords = [];
+    let firstHubRender = true;
+    const routeCache = new Map();
 
-    // ----------------------------------------------------
-    // 2. MAPBOX GL INITIALIZATION
-    // ----------------------------------------------------
+    const hasGSAP = () => typeof window.gsap !== 'undefined';
+    const isMobile = () => window.matchMedia('(max-width: 820px)').matches;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    const EMPTY_FC = { type: 'FeatureCollection', features: [] };
+
+    function esc(value) {
+      return String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function refreshIcons() {
+      if (window.lucide && typeof window.lucide.createIcons === 'function') window.lucide.createIcons();
+    }
+
+    function shortName(name) {
+      const parts = String(name).split(' - ');
+      return (parts[1] || parts[0]).replace(/\s*\(.*?\)\s*/g, '').trim();
+    }
+
+    function nowTime() {
+      return new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    // Smooth number ticker (falls back to instant update without GSAP)
+    function animateNumber(el, to, decimals = 0, duration = 1.1) {
+      if (!el) return;
+      const from = parseFloat(el.dataset.val || el.textContent) || 0;
+      el.dataset.val = to;
+      if (!hasGSAP() || reducedMotion) {
+        el.textContent = Number(to).toFixed(decimals);
+        return;
+      }
+      const state = { v: from };
+      gsap.to(state, {
+        v: to,
+        duration,
+        ease: 'power3.out',
+        onUpdate: () => { el.textContent = state.v.toFixed(decimals); }
+      });
+    }
+
+    function getMapPadding() {
+      if (isMobile()) {
+        const drawer = document.getElementById('drawer');
+        const visible = drawer.classList.contains('is-closed') ? 132 : drawer.offsetHeight;
+        return { top: 170, bottom: visible + 16, left: 24, right: 24 };
+      }
+      const drawerOpen = !document.getElementById('drawer').classList.contains('is-closed');
+      const hudOpen = !document.getElementById('hud-left').classList.contains('is-collapsed');
+      return {
+        top: 110,
+        bottom: 70,
+        left: hudOpen ? document.getElementById('hud-left').offsetWidth + 50 : 110,
+        right: drawerOpen ? document.getElementById('drawer').offsetWidth + 50 : 90
+      };
+    }
+
+    // =========================================================
+    // 2. MAPBOX GL — 3D SPATIAL CANVAS
+    // =========================================================
+    // Markers are rendered as WebGL layers (not HTML), so they sit on the same
+    // ground plane as the route line and never drift at any pitch/zoom.
     function initMap() {
       map = new mapboxgl.Map({
         container: 'map',
         style: 'mapbox://styles/mapbox/dark-v11',
         center: BANYUWANGI_CENTER,
-        zoom: 13,
-        pitch: 0, // Flat 2D top-down view
-        maxPitch: 0, // Strictly disable 3D tilt to eliminate parallax offset
-        dragRotate: false, // Prevent accidental tilting/rotation by user
-        touchPitch: false
+        zoom: 13.6,
+        pitch: VIEW_3D.pitch,
+        bearing: VIEW_3D.bearing,
+        maxPitch: 70,
+        antialias: true,
+        attributionControl: false
       });
 
-      map.addControl(new mapboxgl.NavigationControl(), 'top-left');
+      map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-left');
+      map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), 'bottom-left');
 
       map.on('load', () => {
-        console.log('🗺️ Mapbox Banyuwangi loaded successfully.');
-        drawRoutingLine();
+        tuneBaseStyle();
+        add3DBuildings();
+        addArrowImage();
+        addRouteLayers();
+        addFacilityLayers();
+        addHubLayers();
+        bindHubInteractions();
+        mapReady = true;
         fetchHubs();
+        if (!reducedMotion) requestAnimationFrame(animateMapLayers);
       });
     }
 
-    // Dynamic blue route line connecting active hubs
-    function drawRoutingLine() {
-      if (map.getSource('route-line')) return;
+    function tuneBaseStyle() {
+      try {
+        map.setFog({
+          color: 'rgb(12, 14, 20)',
+          'high-color': 'rgb(14, 22, 38)',
+          'horizon-blend': 0.12,
+          'space-color': 'rgb(6, 7, 11)',
+          'star-intensity': 0
+        });
+        if (map.getLayer('water')) map.setPaintProperty('water', 'fill-color', '#05070C');
+        if (map.getLayer('background')) map.setPaintProperty('background', 'background-color', '#0A0C12');
+      } catch (err) {
+        console.warn('Base style tuning skipped:', err.message);
+      }
+    }
 
-      map.addSource('route-line', {
+    function add3DBuildings() {
+      try {
+        if (!map.getSource('composite') || map.getLayer('3d-buildings')) return;
+        const labelLayer = map.getStyle().layers.find((l) => l.type === 'symbol' && l.layout && l.layout['text-field']);
+        map.addLayer({
+          id: '3d-buildings',
+          source: 'composite',
+          'source-layer': 'building',
+          filter: ['==', 'extrude', 'true'],
+          type: 'fill-extrusion',
+          minzoom: 14,
+          paint: {
+            'fill-extrusion-color': '#161B27',
+            'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 14, 0, 14.8, ['get', 'height']],
+            'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 14, 0, 14.8, ['get', 'min_height']],
+            'fill-extrusion-opacity': 0.8
+          }
+        }, labelLayer ? labelLayer.id : undefined);
+      } catch (err) {
+        console.warn('3D buildings unavailable:', err.message);
+      }
+    }
+
+    function addArrowImage() {
+      if (map.hasImage('route-arrow')) return;
+      const size = 32;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      ctx.strokeStyle = '#E6FBFF';
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(12, 8);
+      ctx.lineTo(21, 16);
+      ctx.lineTo(12, 24);
+      ctx.stroke();
+      map.addImage('route-arrow', ctx.getImageData(0, 0, size, size), { pixelRatio: 2 });
+    }
+
+    function addRouteLayers() {
+      map.addSource('route-line', { type: 'geojson', data: EMPTY_FC });
+
+      map.addLayer({
+        id: 'route-glow',
+        type: 'line',
+        source: 'route-line',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#22D3EE',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 11, 10, 16, 22],
+          'line-opacity': 0.22,
+          'line-blur': 8
+        }
+      });
+
+      map.addLayer({
+        id: 'route-base',
+        type: 'line',
+        source: 'route-line',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#22D3EE',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 11, 3, 16, 6],
+          'line-opacity': 0.6
+        }
+      });
+
+      map.addLayer({
+        id: 'route-dash',
+        type: 'line',
+        source: 'route-line',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#E6FBFF',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 11, 1.6, 16, 3],
+          'line-dasharray': [0, 4, 3]
+        }
+      });
+
+      map.addLayer({
+        id: 'route-arrows',
+        type: 'symbol',
+        source: 'route-line',
+        layout: {
+          'symbol-placement': 'line',
+          'symbol-spacing': 90,
+          'icon-image': 'route-arrow',
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 11, 0.6, 16, 1],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true
+        }
+      });
+    }
+
+    function addFacilityLayers() {
+      map.addSource('facilities', {
         type: 'geojson',
         data: {
-          type: 'Feature',
-          properties: {},
-          geometry: {
-            type: 'LineString',
-            coordinates: []
-          }
+          type: 'FeatureCollection',
+          features: [DEPOT, BSF_FACILITY].map((f) => ({
+            type: 'Feature',
+            properties: { label: f.label },
+            geometry: { type: 'Point', coordinates: f.coord }
+          }))
         }
       });
 
-      // Ambient cyan glow layer underneath
       map.addLayer({
-        id: 'route-line-glow',
-        type: 'line',
-        source: 'route-line',
-        layout: {
-          'line-join': 'round',
-          'line-cap': 'round'
-        },
+        id: 'facility-halo',
+        type: 'circle',
+        source: 'facilities',
         paint: {
-          'line-color': '#06b6d4',
-          'line-width': 8,
-          'line-opacity': 0.35,
-          'line-blur': 3
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 10, 16, 20],
+          'circle-color': '#F5B544',
+          'circle-opacity': 0.14,
+          'circle-pitch-alignment': 'map'
         }
       });
 
-      // Core crisp path line
       map.addLayer({
-        id: 'route-line-layer',
-        type: 'line',
-        source: 'route-line',
+        id: 'facility-core',
+        type: 'circle',
+        source: 'facilities',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 4, 16, 8],
+          'circle-color': '#F5B544',
+          'circle-stroke-color': '#0A0C12',
+          'circle-stroke-width': 2
+        }
+      });
+
+      map.addLayer({
+        id: 'facility-label',
+        type: 'symbol',
+        source: 'facilities',
         layout: {
-          'line-join': 'round',
-          'line-cap': 'round'
+          'text-field': ['get', 'label'],
+          'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+          'text-size': 10,
+          'text-letter-spacing': 0.12,
+          'text-offset': [0, 1.5],
+          'text-anchor': 'top',
+          'text-allow-overlap': true
         },
         paint: {
-          'line-color': '#22d3ee',
-          'line-width': 4.5,
-          'line-opacity': 0.95
+          'text-color': '#F5B544',
+          'text-halo-color': '#090A0F',
+          'text-halo-width': 1.4
         }
       });
     }
 
-    // ----------------------------------------------------
-    // 3. FETCH HUBS & RENDER MARKERS
-    // ----------------------------------------------------
+    function addHubLayers() {
+      map.addSource('hubs', { type: 'geojson', data: EMPTY_FC });
+
+      const statusColor = ['match', ['get', 'status'], 'FULL', '#EF4444', '#10B981'];
+
+      map.addLayer({
+        id: 'hub-pulse',
+        type: 'circle',
+        source: 'hubs',
+        filter: ['==', ['get', 'status'], 'FULL'],
+        paint: {
+          'circle-radius': 14,
+          'circle-color': '#EF4444',
+          'circle-opacity': 0.4,
+          'circle-pitch-alignment': 'map'
+        }
+      });
+
+      map.addLayer({
+        id: 'hub-halo',
+        type: 'circle',
+        source: 'hubs',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 13, 16, 30],
+          'circle-color': statusColor,
+          'circle-opacity': 0.2,
+          'circle-blur': 0.6,
+          'circle-pitch-alignment': 'map'
+        }
+      });
+
+      map.addLayer({
+        id: 'hub-core',
+        type: 'circle',
+        source: 'hubs',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 8, 15, 13, 17, 16],
+          'circle-color': statusColor,
+          'circle-stroke-color': 'rgba(255,255,255,0.9)',
+          'circle-stroke-width': 2
+        }
+      });
+
+      map.addLayer({
+        id: 'hub-number',
+        type: 'symbol',
+        source: 'hubs',
+        layout: {
+          'text-field': ['to-string', ['get', 'id']],
+          'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 11, 10, 15, 13],
+          'text-allow-overlap': true,
+          'text-ignore-placement': true
+        },
+        paint: { 'text-color': '#FFFFFF' }
+      });
+
+      map.addLayer({
+        id: 'hub-name',
+        type: 'symbol',
+        source: 'hubs',
+        minzoom: 13.2,
+        layout: {
+          'text-field': ['get', 'short'],
+          'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
+          'text-size': 11,
+          'text-offset': [0, 1.7],
+          'text-anchor': 'top',
+          'text-allow-overlap': false
+        },
+        paint: {
+          'text-color': '#C9D1E0',
+          'text-halo-color': '#090A0F',
+          'text-halo-width': 1.4
+        }
+      });
+    }
+
+    function bindHubInteractions() {
+      map.on('click', 'hub-core', (e) => {
+        const id = Number(e.features[0].properties.id);
+        openHubPopup(id);
+      });
+      map.on('mouseenter', 'hub-core', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'hub-core', () => { map.getCanvas().style.cursor = ''; });
+    }
+
+    // Animated dashed "truck flow" + pulse ring on FULL hubs
+    const DASH_SEQUENCE = [
+      [0, 4, 3], [0.5, 4, 2.5], [1, 4, 2], [1.5, 4, 1.5], [2, 4, 1], [2.5, 4, 0.5], [3, 4, 0],
+      [0, 0.5, 3, 3.5], [0, 1, 3, 3], [0, 1.5, 3, 2.5], [0, 2, 3, 2], [0, 2.5, 3, 1.5], [0, 3, 3, 1], [0, 3.5, 3, 0.5]
+    ];
+    let dashStep = 0;
+    let lastDashTs = 0;
+    let lastPulseTs = 0;
+
+    function animateMapLayers(ts) {
+      if (map && mapReady) {
+        if (ts - lastDashTs > 55 && map.getLayer('route-dash')) {
+          dashStep = (dashStep + 1) % DASH_SEQUENCE.length;
+          map.setPaintProperty('route-dash', 'line-dasharray', DASH_SEQUENCE[dashStep]);
+          lastDashTs = ts;
+        }
+        if (ts - lastPulseTs > 33 && map.getLayer('hub-pulse')) {
+          const t = (ts % 1800) / 1800;
+          const z = map.getZoom();
+          const base = z >= 15 ? 15 : z >= 13 ? 11 : 8;
+          map.setPaintProperty('hub-pulse', 'circle-radius', base + t * base * 2.2);
+          map.setPaintProperty('hub-pulse', 'circle-opacity', 0.55 * (1 - t));
+          lastPulseTs = ts;
+        }
+      }
+      requestAnimationFrame(animateMapLayers);
+    }
+
+    function syncHubSource() {
+      if (!mapReady || !map.getSource('hubs')) return;
+      map.getSource('hubs').setData({
+        type: 'FeatureCollection',
+        features: hubsData.map((h) => ({
+          type: 'Feature',
+          properties: { id: h.id, status: h.status, points: h.points, short: shortName(h.name) },
+          geometry: { type: 'Point', coordinates: [h.longitude, h.latitude] }
+        }))
+      });
+    }
+
+    // =========================================================
+    // 3. FETCH HUBS
+    // =========================================================
     async function fetchHubs() {
       try {
         const response = await fetch('/api/hubs');
@@ -908,193 +1452,252 @@
         }
       } catch (err) {
         console.error('Failed to fetch hubs:', err);
+        showIslandToast({ type: 'alert', icon: 'wifi-off', title: 'Gagal memuat data', body: 'Tidak bisa mengambil daftar Micro-Hub dari server.' });
       }
     }
 
-    function createMarkerElement(hub) {
-      const el = document.createElement('div');
-      el.className = `custom-marker ${hub.status === 'FULL' ? 'marker-full' : 'marker-empty'}`;
-      el.id = `marker-${hub.id}`;
-
-      el.innerHTML = `
-        <div class="marker-ripple"></div>
-        <div class="marker-beacon">
-          <span>${hub.status === 'FULL' ? '🚨' : '♻️'}</span>
-        </div>
-      `;
-
-      return el;
+    // Kept for compatibility: now syncs WebGL hub layers instead of HTML markers
+    function renderAllHubMarkers() {
+      syncHubSource();
+      updateDynamicRoutingLine();
     }
 
     function createPopupHTML(hub) {
       const isFull = hub.status === 'FULL';
       return `
-        <div style="font-size:0.85rem; font-weight:800; margin-bottom:6px; color:#fff;">${hub.name}</div>
-        <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:4px;">
-          Status: <strong style="color:${isFull ? '#f87171' : '#34d399'}">${hub.status}</strong>
-        </div>
-        <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:4px;">
-          Poin Retribusi: <strong style="color:#fbbf24;">⭐ ${hub.points} Poin</strong>
-        </div>
-        <div style="margin-top:8px; display:flex; gap:6px;">
-          <button style="flex:1; padding:5px; background:${isFull ? '#10b981' : '#ef4444'}; color:#fff; border:none; border-radius:4px; font-size:0.7rem; font-weight:700; cursor:pointer;" onclick="${isFull ? `resetHubAction(${hub.id})` : `sendSimulatorWebhook('PENUH ${hub.id}')`}">
-            ${isFull ? 'Tandai Selesai Jemput' : 'Laporkan Penuh'}
-          </button>
-        </div>
+        <div class="pop-title">${esc(hub.name)}</div>
+        <div class="pop-row"><span>Status</span><span class="mono" style="color:${isFull ? '#FCA5A5' : '#6EE7B7'}">${isFull ? 'NEEDS_COLLECTION' : 'EMPTY'}</span></div>
+        <div class="pop-row"><span>Poin retribusi</span><span class="mono">${hub.points} pt</span></div>
+        <div class="pop-row"><span>Per rumah (÷3)</span><span class="mono">${(hub.points / 3).toFixed(1)} pt</span></div>
+        <div class="pop-row"><span>Koordinat</span><span class="mono">${hub.latitude.toFixed(4)}, ${hub.longitude.toFixed(4)}</span></div>
+        <button class="pop-btn ${isFull ? 'done' : 'report'}" onclick="${isFull ? `resetHubAction(${hub.id})` : `sendSimulatorWebhook('PENUH ${hub.id}')`}">
+          ${isFull ? 'Tandai Selesai Jemput' : 'Laporkan Penuh'}
+        </button>
       `;
     }
 
-    function renderAllHubMarkers(hubs) {
-      hubs.forEach((hub) => {
-        if (markersMap[hub.id]) {
-          markersMap[hub.id].marker.remove();
-        }
-
-        const el = createMarkerElement(hub);
-        const popup = new mapboxgl.Popup({ offset: 20, closeButton: true })
-          .setHTML(createPopupHTML(hub));
-
-        // Use explicit anchor: 'center' to ensure the marker stays pinned to the exact coordinates at all zoom levels
-        const marker = new mapboxgl.Marker({ 
-          element: el, 
-          anchor: 'center' 
-        })
-          .setLngLat([hub.longitude, hub.latitude])
-          .setPopup(popup)
-          .addTo(map);
-
-        markersMap[hub.id] = { marker, element: el, popup };
-      });
-
-      updateDynamicRoutingLine();
+    function openHubPopup(id) {
+      const hub = hubsData.find((h) => h.id === id);
+      if (!hub || !map) return;
+      if (activePopup) activePopup.remove();
+      activePopupHubId = id;
+      activePopup = new mapboxgl.Popup({ offset: 20, closeButton: false, className: 'hub-popup', maxWidth: '300px' })
+        .setLngLat([hub.longitude, hub.latitude])
+        .setHTML(createPopupHTML(hub))
+        .addTo(map);
+      activePopup.on('close', () => { activePopupHubId = null; });
     }
 
-    // Calculate Euclidean distance between two hubs
-    function getDistance(a, b) {
-      const dx = a.longitude - b.longitude;
-      const dy = a.latitude - b.latitude;
-      return Math.sqrt(dx * dx + dy * dy);
+    // =========================================================
+    // 4. DYNAMIC ROUTING — Nearest Neighbor + 2-Opt
+    // =========================================================
+    function haversineKm(a, b) {
+      const R = 6371;
+      const toRad = (d) => (d * Math.PI) / 180;
+      const dLat = toRad(b[1] - a[1]);
+      const dLng = toRad(b[0] - a[0]);
+      const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a[1])) * Math.cos(toRad(b[1])) * Math.sin(dLng / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
     }
 
-    // Solves Nearest Neighbor Route to ensure truck path is clean, realistic, and never cross-zigzagged
-    function calculateOptimizedRoute(hubs) {
-      if (hubs.length <= 1) return hubs.map(h => [h.longitude, h.latitude]);
+    // Route: DEPOT → (FULL hubs, optimized) → MAGGOT BSF
+    function optimizeOrder(hubs) {
+      const coordOf = (h) => [h.longitude, h.latitude];
 
-      const unvisited = [...hubs];
-      // Start from the northernmost or first hub
-      unvisited.sort((a, b) => b.latitude - a.latitude);
-      const route = [unvisited.shift()];
+      // Nearest Neighbor construction from depot
+      const remaining = hubs.slice();
+      const order = [];
+      let current = DEPOT.coord;
+      while (remaining.length) {
+        let best = 0;
+        let bestDist = Infinity;
+        remaining.forEach((h, i) => {
+          const d = haversineKm(current, coordOf(h));
+          if (d < bestDist) { bestDist = d; best = i; }
+        });
+        const next = remaining.splice(best, 1)[0];
+        order.push(next);
+        current = coordOf(next);
+      }
 
-      while (unvisited.length > 0) {
-        const current = route[route.length - 1];
-        let nearestIdx = 0;
-        let minDist = Infinity;
-
-        for (let i = 0; i < unvisited.length; i++) {
-          const dist = getDistance(current, unvisited[i]);
-          if (dist < minDist) {
-            minDist = dist;
-            nearestIdx = i;
+      // 2-Opt improvement with fixed endpoints (depot & BSF)
+      const nodes = [{ c: DEPOT.coord }, ...order.map((h) => ({ c: coordOf(h), h })), { c: BSF_FACILITY.coord }];
+      let improved = true;
+      while (improved) {
+        improved = false;
+        for (let i = 1; i < nodes.length - 2; i++) {
+          for (let k = i + 1; k < nodes.length - 1; k++) {
+            const delta =
+              haversineKm(nodes[i - 1].c, nodes[k].c) + haversineKm(nodes[i].c, nodes[k + 1].c) -
+              haversineKm(nodes[i - 1].c, nodes[i].c) - haversineKm(nodes[k].c, nodes[k + 1].c);
+            if (delta < -1e-9) {
+              nodes.splice(i, k - i + 1, ...nodes.slice(i, k + 1).reverse());
+              improved = true;
+            }
           }
         }
-
-        route.push(unvisited.splice(nearestIdx, 1)[0]);
       }
-
-      return route.map(h => [h.longitude, h.latitude]);
+      return nodes.slice(1, -1).map((n) => n.h);
     }
 
-    // Recalculates dynamic route line connecting only active FULL nodes to show DLH efficient routing
-    function updateDynamicRoutingLine() {
-      if (!map || !map.getSource('route-line')) return;
-
-      const fullHubs = hubsData.filter(h => h.status === 'FULL');
-      let coords = [];
-
-      if (fullHubs.length >= 2) {
-        // Compute optimal non-crossing truck path via Nearest Neighbor
-        coords = calculateOptimizedRoute(fullHubs);
-      } else if (fullHubs.length === 1) {
-        // If only 1 is full, connect from general DLH Banyuwangi depot to that full hub
-        coords = [
-          [114.3645, -8.2165],
-          [fullHubs[0].longitude, fullHubs[0].latitude]
-        ];
-      } else {
-        coords = [];
-      }
-
-      map.getSource('route-line').setData({
-        type: 'Feature',
-        properties: {},
-        geometry: {
-          type: 'LineString',
-          coordinates: coords
-        }
-      });
+    function straightRoute(coords) {
+      let km = 0;
+      for (let i = 1; i < coords.length; i++) km += haversineKm(coords[i - 1], coords[i]);
+      return {
+        geometry: { type: 'LineString', coordinates: coords },
+        distanceKm: km,
+        durationMin: (km / TRUCK_SPEED_KMH) * 60,
+        source: 'ESTIMASI'
+      };
     }
 
-    // ----------------------------------------------------
-    // 4. REAL-TIME UPDATE (SOCKET.IO)
-    // ----------------------------------------------------
+    async function fetchRoadRoute(coords) {
+      const key = coords.map((c) => `${c[0].toFixed(5)},${c[1].toFixed(5)}`).join(';');
+      if (routeCache.has(key)) return routeCache.get(key);
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 7000);
+      try {
+        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${key}?geometries=geojson&overview=full&access_token=${MAPBOX_TOKEN}`;
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`Directions HTTP ${res.status}`);
+        const json = await res.json();
+        const route = json.routes && json.routes[0];
+        if (!route) throw new Error('No route found');
+        const result = {
+          geometry: route.geometry,
+          distanceKm: route.distance / 1000,
+          durationMin: route.duration / 60,
+          source: 'ROAD · MAPBOX'
+        };
+        routeCache.set(key, result);
+        return result;
+      } catch (err) {
+        console.warn('Road routing unavailable, using straight-line estimate:', err.message);
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    function setRouteGeometry(geometry) {
+      if (!mapReady || !map.getSource('route-line')) return;
+      map.getSource('route-line').setData(
+        geometry ? { type: 'Feature', properties: {}, geometry } : EMPTY_FC
+      );
+      lastRouteCoords = geometry ? geometry.coordinates : [];
+    }
+
+    function updateRouteStats(stats, ordered) {
+      const distEl = document.getElementById('route-distance');
+      const etaEl = document.getElementById('route-eta');
+      const stopsEl = document.getElementById('route-stops');
+      const srcEl = document.getElementById('route-source');
+      const orderEl = document.getElementById('route-order');
+
+      if (!stats) {
+        animateNumber(distEl, 0, 1);
+        animateNumber(etaEl, 0, 0);
+        animateNumber(stopsEl, 0, 0);
+        srcEl.textContent = 'STANDBY';
+        orderEl.textContent = 'Semua klaster aman — armada standby.';
+        return;
+      }
+
+      animateNumber(distEl, stats.distanceKm, 1);
+      animateNumber(etaEl, Math.round(stats.durationMin), 0);
+      animateNumber(stopsEl, ordered.length, 0);
+      srcEl.textContent = stats.source;
+      orderEl.innerHTML = ['DEPO', ...ordered.map((h) => `<b>#${h.id}</b>`), 'BSF'].join(' → ');
+    }
+
+    // Recalculates the DVRP route through FULL hubs only
+    async function updateDynamicRoutingLine() {
+      if (!mapReady) return;
+      const fullHubs = hubsData.filter((h) => h.status === 'FULL');
+      const reqId = ++routeRequestId;
+
+      if (!fullHubs.length) {
+        setRouteGeometry(null);
+        updateRouteStats(null);
+        return;
+      }
+
+      const ordered = optimizeOrder(fullHubs);
+      const coords = [DEPOT.coord, ...ordered.map((h) => [h.longitude, h.latitude]), BSF_FACILITY.coord];
+
+      const road = await fetchRoadRoute(coords);
+      if (reqId !== routeRequestId) return; // a newer update superseded this one
+
+      const result = road || straightRoute(coords);
+      setRouteGeometry(result.geometry);
+      updateRouteStats(result, ordered);
+    }
+
+    // =========================================================
+    // 5. REAL-TIME UPDATE (SOCKET.IO)
+    // =========================================================
     function updateHubInState(updatedHub) {
       const index = hubsData.findIndex((h) => h.id === updatedHub.id);
-      if (index !== -1) {
-        hubsData[index] = updatedHub;
-      } else {
-        hubsData.push(updatedHub);
-      }
+      if (index !== -1) hubsData[index] = updatedHub;
+      else hubsData.push(updatedHub);
 
-      // Update Map Marker
-      const markerObj = markersMap[updatedHub.id];
-      if (markerObj) {
-        const el = markerObj.element;
-        const isFull = updatedHub.status === 'FULL';
+      const isFull = updatedHub.status === 'FULL';
 
-        if (isFull) {
-          el.classList.remove('marker-empty');
-          el.classList.add('marker-full');
-          el.querySelector('.marker-beacon span').textContent = '🚨';
-        } else {
-          el.classList.remove('marker-full');
-          el.classList.add('marker-empty');
-          el.querySelector('.marker-beacon span').textContent = '♻️';
-        }
+      syncHubSource();
+      if (activePopup && activePopupHubId === updatedHub.id) activePopup.setHTML(createPopupHTML(updatedHub));
 
-        markerObj.popup.setHTML(createPopupHTML(updatedHub));
-
-        // Pan map smoothly to the reported node
+      // Cinematic camera move toward a newly reported FULL hub
+      if (isFull && map) {
         map.flyTo({
           center: [updatedHub.longitude, updatedHub.latitude],
-          zoom: 13.8,
-          speed: 1.2
+          zoom: 15,
+          pitch: viewMode === '3d' ? 58 : 0,
+          bearing: viewMode === '3d' ? VIEW_3D.bearing - 10 : 0,
+          padding: getMapPadding(),
+          duration: 2600,
+          curve: 1.5,
+          essential: true
         });
       }
 
-      // Re-render route to only target active full hubs
       updateDynamicRoutingLine();
       updateSidebarUI();
+      flashHubRow(updatedHub.id, isFull);
 
-      showToast(
-        updatedHub.status === 'FULL' ? '🚨' : '♻️',
-        `<strong>${updatedHub.name}</strong> sekarang <span style="color:${updatedHub.status === 'FULL' ? '#f87171' : '#34d399'}">${updatedHub.status}</span> (+10 Poin Diskon Retribusi)!`
-      );
+      if (isFull) {
+        showIslandToast({
+          type: 'alert',
+          icon: 'message-circle',
+          title: 'Laporan WhatsApp Masuk',
+          body: `<b>Micro-Hub #${updatedHub.id}</b> PENUH · +10 Poin Retribusi → kalkulasi ulang rute 2-Opt…`
+        });
+      } else {
+        showIslandToast({
+          type: 'ok',
+          icon: 'truck',
+          title: 'Penjemputan Selesai',
+          body: `<b>Micro-Hub #${updatedHub.id}</b> kembali EMPTY · rute armada diperbarui.`
+        });
+      }
 
       addActivityLog(updatedHub);
     }
 
-    // ----------------------------------------------------
-    // 5. SIDEBAR & METRICS UI
-    // ----------------------------------------------------
+    // =========================================================
+    // 6. DRAWER & METRICS UI
+    // =========================================================
     function updateSidebarUI() {
       const fullCount = hubsData.filter((h) => h.status === 'FULL').length;
       const emptyCount = hubsData.filter((h) => h.status === 'EMPTY').length;
       const totalPoints = hubsData.reduce((acc, h) => acc + (h.points || 0), 0);
+      const maxPoints = Math.max(1, ...hubsData.map((h) => h.points || 0));
 
-      document.getElementById('metric-total').textContent = hubsData.length;
-      document.getElementById('metric-full').textContent = fullCount;
-      document.getElementById('metric-empty').textContent = emptyCount;
-      document.getElementById('metric-points').textContent = totalPoints;
+      animateNumber(document.getElementById('metric-total'), hubsData.length);
+      animateNumber(document.getElementById('metric-full'), fullCount);
+      animateNumber(document.getElementById('metric-empty'), emptyCount);
+      animateNumber(document.getElementById('metric-points'), totalPoints);
+      document.getElementById('reopen-count').textContent = fullCount;
 
       const container = document.getElementById('hub-list-container');
       container.innerHTML = '';
@@ -1107,70 +1710,103 @@
         item.onclick = () => focusHub(hub.id);
 
         item.innerHTML = `
-          <div class="hub-top">
-            <div>
-              <div class="hub-name">${hub.name}</div>
-              <div class="hub-coord">ID #${hub.id} &bull; ${hub.latitude.toFixed(4)}, ${hub.longitude.toFixed(4)}</div>
-            </div>
-            <div class="hub-badges">
-              <span class="status-tag ${hub.status}">${hub.status}</span>
-              <span class="pts-tag">⭐ ${hub.points} pt</span>
-            </div>
+          <div class="hub-index">${String(hub.id).padStart(2, '0')}</div>
+          <div class="hub-main">
+            <div class="hub-name" title="${esc(hub.name)}">${esc(hub.name)}</div>
+            <div class="hub-coord">${hub.latitude.toFixed(4)}, ${hub.longitude.toFixed(4)}</div>
+            <div class="hub-bar"><span style="width:${Math.round(((hub.points || 0) / maxPoints) * 100)}%"></span></div>
+            <div class="hub-points"><b>${hub.points} pt</b> · ${(hub.points / 3).toFixed(1)} pt/rumah</div>
           </div>
-          <div class="hub-bottom-actions">
-            <span style="font-size:0.68rem; color:${isFull ? '#fca5a5' : '#86efac'};">
-              ${isFull ? '⚠️ Truk DLH Wajib Jemput' : '✅ Tidak Perlu Didatangi'}
-            </span>
-            <button class="dispatch-btn ${isFull ? 'reset-trigger' : 'full-trigger'}" onclick="event.stopPropagation(); ${isFull ? `resetHubAction(${hub.id})` : `sendSimulatorWebhook('PENUH ${hub.id}')`}">
-              ${isFull ? 'Selesai Jemput' : 'Kirim Laporan'}
+          <div class="hub-side">
+            <span class="pill ${hub.status}">${isFull ? 'NEEDS_COLLECTION' : 'EMPTY'}</span>
+            <button class="hub-action ${isFull ? 'done' : 'report'}" onclick="event.stopPropagation(); ${isFull ? `resetHubAction(${hub.id})` : `sendSimulatorWebhook('PENUH ${hub.id}')`}">
+              ${isFull ? 'Selesai Jemput' : 'Lapor Penuh'}
             </button>
           </div>
         `;
-
         container.appendChild(item);
       });
+
+      if (firstHubRender && hasGSAP() && !reducedMotion) {
+        gsap.from('#hub-list-container .hub-item', { opacity: 0, y: 14, duration: 0.6, stagger: 0.07, ease: 'power3.out', delay: 0.5, clearProps: 'all' });
+      }
+      firstHubRender = false;
+    }
+
+    function flashHubRow(id, isFull) {
+      const row = document.getElementById(`hub-item-${id}`);
+      if (!row || !hasGSAP() || reducedMotion) return;
+      gsap.fromTo(row,
+        { boxShadow: `0 0 0 1px ${isFull ? 'rgba(239,68,68,0.8)' : 'rgba(16,185,129,0.8)'}, 0 0 30px ${isFull ? 'rgba(239,68,68,0.35)' : 'rgba(16,185,129,0.3)'}` },
+        { boxShadow: '0 0 0 0 rgba(0,0,0,0)', duration: 1.6, ease: 'power2.out', clearProps: 'boxShadow' }
+      );
     }
 
     function renderQuickTriggers() {
-      const triggerContainer = document.getElementById('sim-triggers-container');
-      triggerContainer.innerHTML = '';
-
+      const container = document.getElementById('sim-triggers-container');
+      container.innerHTML = '';
       hubsData.forEach((hub) => {
         const btn = document.createElement('button');
         btn.className = 'sim-btn';
-        btn.innerHTML = `<span>#${hub.id} ${hub.name.split('-')[0]}</span> <span>🚨</span>`;
+        btn.innerHTML = `<span>#${hub.id} ${esc(shortName(hub.name))}</span><span class="mono">PENUH</span>`;
         btn.onclick = () => sendSimulatorWebhook(`PENUH ${hub.id}`);
-        triggerContainer.appendChild(btn);
+        container.appendChild(btn);
       });
     }
 
     function focusHub(id) {
       const hub = hubsData.find((h) => h.id === id);
-      if (hub && map) {
-        map.flyTo({
-          center: [hub.longitude, hub.latitude],
-          zoom: 14.5,
-          speed: 1.2
-        });
-
-        if (markersMap[id]) {
-          markersMap[id].marker.togglePopup();
-        }
-      }
+      if (!hub || !map) return;
+      map.flyTo({
+        center: [hub.longitude, hub.latitude],
+        zoom: 15.4,
+        pitch: viewMode === '3d' ? VIEW_3D.pitch : 0,
+        bearing: viewMode === '3d' ? VIEW_3D.bearing : 0,
+        padding: getMapPadding(),
+        duration: 1800,
+        essential: true
+      });
+      openHubPopup(id);
     }
 
     function focusFullHubs() {
-      const fullHub = hubsData.find((h) => h.status === 'FULL');
-      if (fullHub) {
-        focusHub(fullHub.id);
+      if (!map) return;
+      if (lastRouteCoords.length > 1) {
+        const bounds = lastRouteCoords.reduce((b, c) => b.extend(c), new mapboxgl.LngLatBounds(lastRouteCoords[0], lastRouteCoords[0]));
+        map.fitBounds(bounds, {
+          padding: getMapPadding(),
+          pitch: viewMode === '3d' ? VIEW_3D.pitch : 0,
+          bearing: viewMode === '3d' ? VIEW_3D.bearing : 0,
+          duration: 1800,
+          essential: true
+        });
       } else {
-        map.flyTo({ center: BANYUWANGI_CENTER, zoom: 12.5 });
+        map.flyTo({ center: BANYUWANGI_CENTER, zoom: 13.4, padding: getMapPadding(), duration: 1600 });
       }
     }
 
-    // ----------------------------------------------------
-    // 6. ACTION DISPATCHERS & SIMULATOR
-    // ----------------------------------------------------
+    function toggleViewMode() {
+      viewMode = viewMode === '3d' ? '2d' : '3d';
+      const view = viewMode === '3d' ? VIEW_3D : VIEW_2D;
+      document.getElementById('view-label').textContent = viewMode.toUpperCase();
+      map.easeTo({ ...view, duration: 1200, essential: true });
+    }
+
+    function toggleDrawer() {
+      const drawer = document.getElementById('drawer');
+      drawer.classList.toggle('is-closed');
+      if (!isMobile()) {
+        document.getElementById('drawer-reopen').classList.toggle('is-visible', drawer.classList.contains('is-closed'));
+      }
+    }
+
+    function toggleHud() {
+      document.getElementById('hud-left').classList.toggle('is-collapsed');
+    }
+
+    // =========================================================
+    // 7. ACTION DISPATCHERS & SIMULATOR (endpoints unchanged)
+    // =========================================================
     async function sendSimulatorWebhook(msg) {
       try {
         const res = await fetch('/webhook/whatsapp', {
@@ -1180,6 +1816,9 @@
         });
         const data = await res.json();
         console.log('Webhook dispatched:', data);
+        if (data && data.ignored) {
+          showIslandToast({ type: 'info', icon: 'info', title: 'Pesan diabaikan', body: `Format tidak dikenali: <b>${esc(msg)}</b>. Gunakan <b>PENUH &lt;id&gt;</b>.` });
+        }
       } catch (err) {
         console.error('Error sending webhook:', err);
       }
@@ -1188,9 +1827,7 @@
     function sendCustomSimulator() {
       const input = document.getElementById('sim-custom-input');
       const text = input.value.trim();
-      if (text) {
-        sendSimulatorWebhook(text);
-      }
+      if (text) sendSimulatorWebhook(text);
     }
 
     async function resetHubAction(id) {
@@ -1203,52 +1840,150 @@
       }
     }
 
-    function showToast(icon, message) {
-      const container = document.getElementById('toast-container');
-      const toast = document.createElement('div');
-      toast.className = 'toast';
-      toast.innerHTML = `<span>${icon}</span><div>${message}</div>`;
-      container.appendChild(toast);
+    function simulateRandomReport() {
+      const empties = hubsData.filter((h) => h.status === 'EMPTY');
+      if (!empties.length) {
+        showIslandToast({ type: 'info', icon: 'info', title: 'Semua klaster sudah PENUH', body: 'Tekan <b>Reset Route</b> untuk mensimulasikan truk selesai menjemput.' });
+        return;
+      }
+      const pick = empties[Math.floor(Math.random() * empties.length)];
+      sendSimulatorWebhook(`PENUH ${pick.id}`);
+    }
 
-      setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transition = 'opacity 0.3s';
-        setTimeout(() => toast.remove(), 300);
-      }, 3500);
+    async function resetAllHubs() {
+      const full = hubsData.filter((h) => h.status === 'FULL');
+      if (!full.length) {
+        showIslandToast({ type: 'info', icon: 'info', title: 'Tidak ada rute aktif', body: 'Semua Micro-Hub sudah dalam status EMPTY.' });
+        return;
+      }
+      for (const hub of full) {
+        await resetHubAction(hub.id);
+      }
+    }
+
+    // =========================================================
+    // 8. DYNAMIC ISLAND TOAST & ACTIVITY LOG
+    // =========================================================
+    function showIslandToast({ type = 'info', icon = 'bell', title, body, duration = 4800 }) {
+      const container = document.getElementById('toast-container');
+      while (container.children.length >= 3) container.firstElementChild.remove();
+
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.innerHTML = `
+        <div class="toast-icon"><i data-lucide="${icon}"></i></div>
+        <div class="toast-body">
+          <div class="toast-title"><span>${title}</span><span class="mono">${nowTime()}</span></div>
+          <div class="toast-text">${body}</div>
+        </div>
+        <div class="toast-progress"></div>
+      `;
+      container.appendChild(toast);
+      refreshIcons();
+
+      const dismiss = () => {
+        if (hasGSAP() && !reducedMotion) {
+          gsap.to(toast, { opacity: 0, y: isMobile() ? -16 : 16, scale: 0.94, duration: 0.35, ease: 'power2.in', onComplete: () => toast.remove() });
+        } else {
+          toast.remove();
+        }
+      };
+
+      if (hasGSAP() && !reducedMotion) {
+        gsap.fromTo(toast,
+          { opacity: 0, y: isMobile() ? -24 : 24, scaleX: 0.55, scaleY: 0.8 },
+          { opacity: 1, y: 0, scaleX: 1, scaleY: 1, duration: 0.7, ease: 'elastic.out(1, 0.75)' }
+        );
+        gsap.fromTo(toast.querySelector('.toast-progress'), { scaleX: 1 }, { scaleX: 0, duration: duration / 1000, ease: 'none' });
+      }
+
+      toast.addEventListener('click', dismiss);
+      setTimeout(dismiss, duration);
+    }
+
+    // Backward-compatible wrapper
+    function showToast(icon, message) {
+      showIslandToast({ type: 'info', icon: 'bell', title: `${icon} Notifikasi`, body: message });
     }
 
     function addActivityLog(hub) {
       const feed = document.getElementById('activity-feed');
       const row = document.createElement('div');
       row.className = 'activity-row';
-      const now = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
+      const isFull = hub.status === 'FULL';
       row.innerHTML = `
-        <div class="activity-time">${now}</div>
-        <div><strong>${hub.name}</strong> dilaporkan <code>${hub.status}</code> &bull; Total poin: <strong>${hub.points} pt</strong>.</div>
+        <div class="activity-time">${nowTime()}</div>
+        <div><b class="${isFull ? 'full' : 'empty'}">#${hub.id}</b> ${esc(shortName(hub.name))} → <span class="mono">${isFull ? 'NEEDS_COLLECTION' : 'EMPTY'}</span> · ${hub.points} pt</div>
       `;
-
       feed.insertBefore(row, feed.firstChild);
+      while (feed.children.length > 40) feed.lastElementChild.remove();
     }
 
-    // ----------------------------------------------------
-    // 7. INITIALIZE SOCKET.IO & MAP
-    // ----------------------------------------------------
+    // =========================================================
+    // 9. MOTION — entrance, counters, magnetic buttons
+    // =========================================================
+    function runEntrance() {
+      document.querySelectorAll('[data-count]').forEach((el) => {
+        animateNumber(el, parseFloat(el.dataset.count), parseInt(el.dataset.decimals || '0', 10), 1.8);
+      });
+
+      if (!hasGSAP() || reducedMotion) return;
+
+      const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+      tl.from('#island', { y: -40, opacity: 0, scale: 0.9, duration: 0.9, ease: 'expo.out', clearProps: 'transform,opacity' })
+        .from('#hud-left > *, #hud-cards > .kpi', { x: -28, opacity: 0, duration: 0.7, stagger: 0.08, clearProps: 'transform,opacity' }, '-=0.5')
+        .from('#drawer', { x: 40, opacity: 0, duration: 0.8, clearProps: 'transform,opacity' }, '-=0.7');
+    }
+
+    function initMagneticButtons() {
+      if (!hasGSAP() || reducedMotion || !window.matchMedia('(pointer: fine)').matches) return;
+      document.querySelectorAll('.magnetic').forEach((el) => {
+        el.addEventListener('mousemove', (e) => {
+          const r = el.getBoundingClientRect();
+          gsap.to(el, {
+            x: (e.clientX - r.left - r.width / 2) * 0.25,
+            y: (e.clientY - r.top - r.height / 2) * 0.35,
+            duration: 0.4,
+            ease: 'power3.out'
+          });
+        });
+        el.addEventListener('mouseleave', () => gsap.to(el, { x: 0, y: 0, duration: 0.8, ease: 'elastic.out(1, 0.4)' }));
+        el.addEventListener('mousedown', () => gsap.to(el, { scale: 0.94, duration: 0.15 }));
+        el.addEventListener('mouseup', () => gsap.to(el, { scale: 1, duration: 0.5, ease: 'elastic.out(1, 0.5)' }));
+      });
+    }
+
+    // =========================================================
+    // 10. BOOTSTRAP — Socket.io & Map
+    // =========================================================
     window.addEventListener('DOMContentLoaded', () => {
+      refreshIcons();
+      if (isMobile()) document.getElementById('drawer').classList.add('is-closed');
+
       initMap();
+      runEntrance();
+      initMagneticButtons();
+
+      document.getElementById('sim-custom-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') sendCustomSimulator();
+      });
 
       const socket = io();
+      const pill = document.getElementById('socket-status');
       const dot = document.getElementById('socket-dot');
       const text = document.getElementById('socket-text');
 
       socket.on('connect', () => {
         dot.classList.add('connected');
-        text.textContent = 'Terhubung ke Dispatcher';
+        pill.classList.add('is-live');
+        text.textContent = 'LIVE SYNC';
+        if (mapReady) fetchHubs(); // resync after reconnect
       });
 
       socket.on('disconnect', () => {
         dot.classList.remove('connected');
-        text.textContent = 'Terputus';
+        pill.classList.remove('is-live');
+        text.textContent = 'OFFLINE';
       });
 
       socket.on('route_update', (updatedHub) => {
