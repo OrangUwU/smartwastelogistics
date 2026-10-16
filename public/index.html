@@ -828,7 +828,10 @@
         style: 'mapbox://styles/mapbox/dark-v11',
         center: BANYUWANGI_CENTER,
         zoom: 13,
-        pitch: 0 // Top-down flat 2D projection eliminates 3D perspective skew during zoom
+        pitch: 0, // Flat 2D top-down view
+        maxPitch: 0, // Strictly disable 3D tilt to eliminate parallax offset
+        dragRotate: false, // Prevent accidental tilting/rotation by user
+        touchPitch: false
       });
 
       map.addControl(new mapboxgl.NavigationControl(), 'top-left');
@@ -856,6 +859,24 @@
         }
       });
 
+      // Ambient cyan glow layer underneath
+      map.addLayer({
+        id: 'route-line-glow',
+        type: 'line',
+        source: 'route-line',
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': '#06b6d4',
+          'line-width': 8,
+          'line-opacity': 0.35,
+          'line-blur': 3
+        }
+      });
+
+      // Core crisp path line
       map.addLayer({
         id: 'route-line-layer',
         type: 'line',
@@ -865,10 +886,9 @@
           'line-cap': 'round'
         },
         paint: {
-          'line-color': '#06b6d4',
-          'line-width': 4,
-          'line-opacity': 0.85,
-          'line-dasharray': [2, 1]
+          'line-color': '#22d3ee',
+          'line-width': 4.5,
+          'line-opacity': 0.95
         }
       });
     }
@@ -949,6 +969,41 @@
       updateDynamicRoutingLine();
     }
 
+    // Calculate Euclidean distance between two hubs
+    function getDistance(a, b) {
+      const dx = a.longitude - b.longitude;
+      const dy = a.latitude - b.latitude;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    // Solves Nearest Neighbor Route to ensure truck path is clean, realistic, and never cross-zigzagged
+    function calculateOptimizedRoute(hubs) {
+      if (hubs.length <= 1) return hubs.map(h => [h.longitude, h.latitude]);
+
+      const unvisited = [...hubs];
+      // Start from the northernmost or first hub
+      unvisited.sort((a, b) => b.latitude - a.latitude);
+      const route = [unvisited.shift()];
+
+      while (unvisited.length > 0) {
+        const current = route[route.length - 1];
+        let nearestIdx = 0;
+        let minDist = Infinity;
+
+        for (let i = 0; i < unvisited.length; i++) {
+          const dist = getDistance(current, unvisited[i]);
+          if (dist < minDist) {
+            minDist = dist;
+            nearestIdx = i;
+          }
+        }
+
+        route.push(unvisited.splice(nearestIdx, 1)[0]);
+      }
+
+      return route.map(h => [h.longitude, h.latitude]);
+    }
+
     // Recalculates dynamic route line connecting only active FULL nodes to show DLH efficient routing
     function updateDynamicRoutingLine() {
       if (!map || !map.getSource('route-line')) return;
@@ -957,8 +1012,8 @@
       let coords = [];
 
       if (fullHubs.length >= 2) {
-        // Connect all full hubs in order
-        coords = fullHubs.map(h => [h.longitude, h.latitude]);
+        // Compute optimal non-crossing truck path via Nearest Neighbor
+        coords = calculateOptimizedRoute(fullHubs);
       } else if (fullHubs.length === 1) {
         // If only 1 is full, connect from general DLH Banyuwangi depot to that full hub
         coords = [
