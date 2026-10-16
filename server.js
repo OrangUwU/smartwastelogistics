@@ -156,10 +156,12 @@ app.post('/webhook/whatsapp', async (req, res) => {
       });
     }
 
-    // Non-matching message
-    return res.status(400).json({
-      success: false,
-      error: `Unrecognized message command: "${incomingText}". Use format "PENUH <id>" (e.g., "PENUH 1").`
+    // Non-matching message (e.g. personal chats, family, friends)
+    // Silently ignore with 200 OK so Fonnte doesn't retry and personal chats are completely untouched
+    return res.status(200).json({
+      success: true,
+      ignored: true,
+      message: 'Message ignored (not a waste logistics command).'
     });
   } catch (error) {
     console.error('❌ Error processing WhatsApp webhook:', error);
