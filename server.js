@@ -102,11 +102,18 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
     const trimmed = incomingText.trim();
 
-    // 1. Check for "PENUH <id>" command
-    const penuhMatch = trimmed.match(/^PENUH\s+(\d+)$/i);
+    // 1. Check for "PENUH" or "PENUH <id>" command
+    const penuhMatch = trimmed.match(/^PENUH(?:\s+(\d+))?$/i);
 
     if (penuhMatch) {
-      const hubId = parseInt(penuhMatch[1], 10);
+      let hubId = penuhMatch[1] ? parseInt(penuhMatch[1], 10) : null;
+
+      // If just "PENUH" without ID, find the first hub that is currently EMPTY, or fallback to Hub 1
+      if (!hubId) {
+        const allHubs = await getAllHubs();
+        const emptyHub = allHubs.find((h) => h.status === 'EMPTY');
+        hubId = emptyHub ? emptyHub.id : 1;
+      }
 
       // Check if hub exists
       const existingHub = await getHubById(hubId);
@@ -121,7 +128,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
       // b. Add 10 points
       const updatedHub = await updateHubStatusAndPoints(hubId, 'FULL', 10);
 
-      console.log(`🚨 Hub ${hubId} marked as FULL! Points updated to ${updatedHub.points}`);
+      console.log(`🚨 Hub ${hubId} (${updatedHub.name}) marked as FULL! Points updated to ${updatedHub.points}`);
 
       // c. Emit Socket.io event 'route_update'
       io.emit('route_update', updatedHub);
