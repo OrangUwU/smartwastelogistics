@@ -11,5 +11,7 @@ jobs:
     steps:
       - name: Trigger Raznar Auto Deploy
         run: |
-          curl -X POST "${{ secrets.RAZNAR_WEBHOOK_URL }}" \
+          curl -f -sS -X GET "${{ secrets.RAZNAR_WEBHOOK_URL }}" \
+            -H "X-Webhook-Token: ${{ secrets.RAZNAR_WEBHOOK_TOKEN }}" || \
+          curl -f -sS -X POST "${{ secrets.RAZNAR_WEBHOOK_URL }}" \
             -H "X-Webhook-Token: ${{ secrets.RAZNAR_WEBHOOK_TOKEN }}"
