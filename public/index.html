@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DLH Smart Dispatcher - Logistik Sampah Adaptif Banyuwangi</title>
+  <meta name="description" content="Sistem Dispatching Rute Dinamis & Pemantauan Micro-Hub DLH Banyuwangi berbasis WhatsApp Bot & Socket.io">
+  
+  <!-- Google Fonts: Plus Jakarta Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Mapbox GL JS -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet">
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
+  
+  <!-- Socket.io Client -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <style>
+    :root {
+      --bg-dark: #080c14;
+      --surface-card: rgba(14, 20, 32, 0.85);
+      --surface-card-hover: rgba(22, 32, 52, 0.95);
+      --surface-border: rgba(255, 255, 255, 0.08);
+      --surface-border-subtle: rgba(255, 255, 255, 0.04);
+      --dlh-green: #10b981;
+      --dlh-green-glow: rgba(16, 185, 129, 0.4);
+      --dlh-amber: #f59e0b;
+      --dlh-red: #ef4444;
+      --dlh-red-glow: rgba(239, 68, 68, 0.5);
+      --dlh-cyan: #06b6d4;
+      --dlh-cyan-glow: rgba(6, 182, 212, 0.35);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-family);
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top Command Header */
+    header {
+      height: 64px;
+      background: rgba(8, 12, 20, 0.95);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--surface-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-badge {
+      padding: 4px 8px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: var(--dlh-green);
+      font-size: 0.7rem;
+      font-weight: 800;
+      border-radius: 6px;
+      letter-spacing: 0.05em;
+    }
+
+    .brand-title {
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-subtitle {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .quick-route-btn {
+      background: linear-gradient(135deg, #059669, #10b981);
+      border: none;
+      color: #fff;
+      padding: 7px 14px;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 2px 10px rgba(16, 185, 129, 0.3);
+      transition: all 0.2s;
+    }
+
+    .quick-route-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 15px rgba(16, 185, 129, 0.45);
+    }
+
+    .socket-status {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 5px 12px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--surface-border);
+      border-radius: 9999px;
+    }
+
+    .socket-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background-color: var(--dlh-red);
+      box-shadow: 0 0 8px var(--dlh-red);
+      transition: background-color 0.3s;
+    }
+
+    .socket-dot.connected {
+      background-color: var(--dlh-green);
+      box-shadow: 0 0 8px var(--dlh-green);
+    }
+
+    /* Main Content Layout */
+    .dashboard-layout {
+      flex: 1;
+      display: flex;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Map View Container */
+    #map-container {
+      flex: 1;
+      height: 100%;
+      position: relative;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Map Overlay Legend */
+    .map-overlay-legend {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      z-index: 10;
+      background: var(--surface-card);
+      backdrop-filter: blur(14px);
+      border: 1px solid var(--surface-border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 0.75rem;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .legend-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+    }
+
+    .legend-dot.red { background: var(--dlh-red); box-shadow: 0 0 8px var(--dlh-red); }
+    .legend-dot.green { background: var(--dlh-green); box-shadow: 0 0 8px var(--dlh-green); }
+    .legend-dot.cyan { background: var(--dlh-cyan); box-shadow: 0 0 8px var(--dlh-cyan); }
+
+    /* DLH Dispatcher Sidebar */
+    .sidebar {
+      width: 440px;
+      height: 100%;
+      background: var(--surface-card);
+      backdrop-filter: blur(24px);
+      border-left: 1px solid var(--surface-border);
+      display: flex;
+      flex-direction: column;
+      z-index: 50;
+      box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .sidebar-header {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--surface-border);
+    }
+
+    .sidebar-header-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .sidebar-header h2 {
+      font-size: 0.95rem;
+      font-weight: 800;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Bento Grid Metrics */
+    .bento-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+
+    .bento-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--surface-border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      text-align: center;
+      transition: all 0.2s;
+    }
+
+    .bento-card:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .bento-card .val {
+      font-size: 1.25rem;
+      font-weight: 800;
+      font-family: var(--font-mono);
+      line-height: 1.2;
+    }
+
+    .bento-card .label {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      margin-top: 3px;
+    }
+
+    .val.green { color: var(--dlh-green); }
+    .val.red { color: var(--dlh-red); }
+    .val.amber { color: var(--dlh-amber); }
+    .val.cyan { color: var(--dlh-cyan); }
+
+    /* Scrollable Tab Content */
+    .sidebar-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .section-title {
+      font-size: 0.74rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* Simulator Panel */
+    .sim-card {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--surface-border);
+      border-radius: 12px;
+      padding: 14px;
+    }
+
+    .sim-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .sim-badge {
+      font-size: 0.68rem;
+      background: rgba(37, 211, 102, 0.15);
+      border: 1px solid rgba(37, 211, 102, 0.3);
+      color: #25d366;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-weight: 700;
+    }
+
+    .sim-triggers {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .sim-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--surface-border);
+      color: #fff;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 0.74rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all 0.2s;
+    }
+
+    .sim-btn:hover {
+      background: rgba(239, 68, 68, 0.18);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+
+    .sim-input-row {
+      display: flex;
+      gap: 6px;
+    }
+
+    .sim-input {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--surface-border);
+      color: #fff;
+      padding: 7px 12px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      font-family: var(--font-mono);
+    }
+
+    .sim-input:focus {
+      outline: none;
+      border-color: var(--dlh-green);
+    }
+
+    .sim-send {
+      background: #25d366;
+      border: none;
+      color: #000;
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .sim-send:hover {
+      opacity: 0.9;
+    }
+
+    /* Hubs List Cards */
+    .hub-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .hub-item {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--surface-border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .hub-item:hover {
+      background: var(--surface-card-hover);
+      border-color: rgba(255, 255, 255, 0.18);
+      transform: translateX(2px);
+    }
+
+    .hub-item.is-full {
+      border-left: 4px solid var(--dlh-red);
+      background: rgba(239, 68, 68, 0.05);
+    }
+
+    .hub-item.is-empty {
+      border-left: 4px solid var(--dlh-green);
+    }
+
+    .hub-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .hub-name {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .hub-coord {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      margin-top: 2px;
+    }
+
+    .hub-badges {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-tag {
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+    }
+
+    .status-tag.FULL {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #f87171;
+    }
+
+    .status-tag.EMPTY {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: #34d399;
+    }
+
+    .pts-tag {
+      padding: 3px 7px;
+      border-radius: 4px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      color: #fbbf24;
+    }
+
+    .hub-bottom-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 6px;
+      border-top: 1px solid var(--surface-border-subtle);
+    }
+
+    .dispatch-btn {
+      padding: 4px 10px;
+      border-radius: 5px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+    }
+
+    .dispatch-btn.full-trigger {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .dispatch-btn.full-trigger:hover {
+      background: var(--dlh-red);
+      color: #fff;
+    }
+
+    .dispatch-btn.reset-trigger {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .dispatch-btn.reset-trigger:hover {
+      background: var(--dlh-green);
+      color: #000;
+    }
+
+    /* Live Activity Feed */
+    .activity-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+
+    .activity-row {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--surface-border-subtle);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 0.72rem;
+      line-height: 1.4;
+      display: flex;
+      gap: 8px;
+    }
+
+    .activity-time {
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      font-size: 0.65rem;
+      white-space: nowrap;
+    }
+
+    /* Map Markers */
+    .mapboxgl-marker {
+      /* Vital: ensure Mapbox coordinate transform is strictly preserved without browser box-sizing distortion */
+      box-sizing: content-box !important;
+    }
+
+    .custom-marker {
+      width: 32px;
+      height: 32px;
+      cursor: pointer;
+      position: relative;
+      user-select: none;
+      display: block;
+    }
+
+    .marker-beacon {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 800;
+      color: #fff;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+      position: relative;
+      z-index: 2;
+      transition: transform 0.15s ease-out;
+    }
+
+    .custom-marker:hover .marker-beacon {
+      transform: scale(1.15);
+    }
+
+    .marker-empty .marker-beacon {
+      background: linear-gradient(135deg, #10b981, #047857);
+      border: 2px solid #a7f3d0;
+      box-shadow: 0 0 14px var(--dlh-green-glow);
+    }
+
+    .marker-full .marker-beacon {
+      background: linear-gradient(135deg, #ef4444, #b91c1c);
+      border: 2px solid #fecaca;
+      box-shadow: 0 0 20px var(--dlh-red-glow);
+    }
+
+    .marker-ripple {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: rgba(239, 68, 68, 0.45);
+      opacity: 0;
+      pointer-events: none;
+      animation: rippleAnim 1.8s infinite;
+      display: none;
+      z-index: 1;
+    }
+
+    .marker-full .marker-ripple {
+      display: block;
+    }
+
+    @keyframes rippleAnim {
+      0% { transform: scale(1); opacity: 0.9; }
+      100% { transform: scale(2.5); opacity: 0; }
+    }
+
+    /* Mapbox Popup Overrides */
+    .mapboxgl-popup-content {
+      background: #0f172a !important;
+      color: #fff !important;
+      border-radius: 10px !important;
+      padding: 12px 14px !important;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6) !important;
+      border: 1px solid var(--surface-border) !important;
+      font-family: var(--font-family) !important;
+      max-width: 250px !important;
+    }
+
+    .mapboxgl-popup-close-button { color: #94a3b8 !important; }
+
+    /* Toast Notification */
+    #toast-container {
+      position: absolute;
+      top: 76px;
+      right: 460px;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .toast {
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid var(--surface-border);
+      border-left: 4px solid var(--dlh-red);
+      color: #fff;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      animation: toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Command Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-badge">DLH BANYUWANGI</div>
+      <div>
+        <div class="brand-title">
+          <span>🌿 Smart Waste Dispatcher</span>
+          <span style="font-size:0.75rem; color:#94a3b8; font-weight:500;">| Command Center</span>
+        </div>
+        <div class="brand-subtitle">Pemantauan Micro-Hub & Dynamic Routing Armada Truk DLH</div>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <button class="quick-route-btn" onclick="focusFullHubs()">
+        <span>🚛</span> Fokus Rute Aktif
+      </button>
+
+      <div class="socket-status" id="socket-status">
+        <div class="socket-dot" id="socket-dot"></div>
+        <span id="socket-text">Terhubung</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Dashboard Layout -->
+  <div class="dashboard-layout">
+    <!-- Map Container -->
+    <div id="map-container">
+      <div id="map"></div>
+
+      <!-- Map Overlay Legend -->
+      <div class="map-overlay-legend">
+        <div style="font-weight: 800; font-size: 0.7rem; color: #94a3b8; margin-bottom: 2px;">STATUS NODE LOGISTIK</div>
+        <div class="legend-item">
+          <div class="legend-dot red"></div>
+          <span><strong>PENUH</strong> &bull; Prioritas Jemput Truk DLH</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot green"></div>
+          <span><strong>KOSONG</strong> &bull; Kapasitas Aman (Lewati)</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot cyan"></div>
+          <span><strong>RUTE BIRU</strong> &bull; Jalur Truk Efisien</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container"></div>
+
+    <!-- DLH Dispatcher Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-header-top">
+          <h2>📊 Ringkasan Operasional DLH</h2>
+          <span style="font-size: 0.7rem; color: #34d399; font-weight: 700;">Live Real-time</span>
+        </div>
+        
+        <!-- Bento Grid Metrics -->
+        <div class="bento-metrics">
+          <div class="bento-card">
+            <div class="val" id="metric-total">4</div>
+            <div class="label">Total Node</div>
+          </div>
+          <div class="bento-card">
+            <div class="val red" id="metric-full">2</div>
+            <div class="label">Penuh</div>
+          </div>
+          <div class="bento-card">
+            <div class="val green" id="metric-empty">2</div>
+            <div class="label">Aman</div>
+          </div>
+          <div class="bento-card">
+            <div class="val amber" id="metric-points">120</div>
+            <div class="label">Poin Warga</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-body">
+        <!-- WhatsApp Webhook Simulator Box -->
+        <div>
+          <div class="section-title">
+            <span>Simulator WhatsApp Bot Warga</span>
+            <span class="sim-badge">POST /webhook/whatsapp</span>
+          </div>
+          <div class="sim-card">
+            <div class="sim-header">
+              <span style="font-size: 0.75rem; font-weight: 600; color: #e2e8f0;">Laporan Human-as-a-Sensor</span>
+              <span style="font-size: 0.68rem; color: var(--text-muted);">Biaya Hardware Rp 0</span>
+            </div>
+            
+            <div class="sim-triggers" id="sim-triggers-container">
+              <!-- Dynamically filled with quick trigger buttons -->
+            </div>
+
+            <div class="sim-input-row">
+              <input type="text" id="sim-custom-input" class="sim-input" placeholder="Contoh: PENUH 1 atau KOSONG 1" value="PENUH 1" />
+              <button class="sim-send" onclick="sendCustomSimulator()">Kirim</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Micro-Hub List -->
+        <div>
+          <div class="section-title">
+            <span>Daftar Micro-Hub & Klaster Rumah</span>
+            <span style="color: var(--dlh-cyan); font-weight: 700; font-size: 0.7rem;">Banyuwangi DLH Node</span>
+          </div>
+          <div class="hub-list" id="hub-list-container">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Activity Feed -->
+        <div>
+          <div class="section-title">
+            <span>Log Aktivitas Armada & Laporan</span>
+            <span style="font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono);">WebSocket</span>
+          </div>
+          <div class="activity-feed" id="activity-feed">
+            <div class="activity-row">
+              <div class="activity-time">00:00</div>
+              <div>Sistem Dispatcher DLH siap memantau rute dinamis.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    // ----------------------------------------------------
+    // 1. CONFIGURATION & STATE
+    // ----------------------------------------------------
+    const MAPBOX_TOKEN = 'pk.eyJ1Ijoib3Bla2RldjEyIiwiYSI6ImNtdjU0Y3Y0ZTAxZ3Myd3NldDd6YjJ0M3QifQ.I2J71Wfbm7fA3YQ-bmbaow';
+    mapboxgl.accessToken = MAPBOX_TOKEN;
+
+    // Banyuwangi Center Coordinates
+    const BANYUWANGI_CENTER = [114.3645, -8.2165];
+
+    let map = null;
+    let hubsData = [];
+    const markersMap = {};
+
+    // ----------------------------------------------------
+    // 2. MAPBOX GL INITIALIZATION
+    // ----------------------------------------------------
+    function initMap() {
+      map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/mapbox/dark-v11',
+        center: BANYUWANGI_CENTER,
+        zoom: 13,
+        pitch: 0 // Top-down flat 2D projection eliminates 3D perspective skew during zoom
+      });
+
+      map.addControl(new mapboxgl.NavigationControl(), 'top-left');
+
+      map.on('load', () => {
+        console.log('🗺️ Mapbox Banyuwangi loaded successfully.');
+        drawRoutingLine();
+        fetchHubs();
+      });
+    }
+
+    // Dynamic blue route line connecting active hubs
+    function drawRoutingLine() {
+      if (map.getSource('route-line')) return;
+
+      map.addSource('route-line', {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: []
+          }
+        }
+      });
+
+      map.addLayer({
+        id: 'route-line-layer',
+        type: 'line',
+        source: 'route-line',
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': '#06b6d4',
+          'line-width': 4,
+          'line-opacity': 0.85,
+          'line-dasharray': [2, 1]
+        }
+      });
+    }
+
+    // ----------------------------------------------------
+    // 3. FETCH HUBS & RENDER MARKERS
+    // ----------------------------------------------------
+    async function fetchHubs() {
+      try {
+        const response = await fetch('/api/hubs');
+        const json = await response.json();
+        if (json.success && json.data) {
+          hubsData = json.data;
+          renderAllHubMarkers(hubsData);
+          updateSidebarUI();
+          renderQuickTriggers();
+        }
+      } catch (err) {
+        console.error('Failed to fetch hubs:', err);
+      }
+    }
+
+    function createMarkerElement(hub) {
+      const el = document.createElement('div');
+      el.className = `custom-marker ${hub.status === 'FULL' ? 'marker-full' : 'marker-empty'}`;
+      el.id = `marker-${hub.id}`;
+
+      el.innerHTML = `
+        <div class="marker-ripple"></div>
+        <div class="marker-beacon">
+          <span>${hub.status === 'FULL' ? '🚨' : '♻️'}</span>
+        </div>
+      `;
+
+      return el;
+    }
+
+    function createPopupHTML(hub) {
+      const isFull = hub.status === 'FULL';
+      return `
+        <div style="font-size:0.85rem; font-weight:800; margin-bottom:6px; color:#fff;">${hub.name}</div>
+        <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:4px;">
+          Status: <strong style="color:${isFull ? '#f87171' : '#34d399'}">${hub.status}</strong>
+        </div>
+        <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:4px;">
+          Poin Retribusi: <strong style="color:#fbbf24;">⭐ ${hub.points} Poin</strong>
+        </div>
+        <div style="margin-top:8px; display:flex; gap:6px;">
+          <button style="flex:1; padding:5px; background:${isFull ? '#10b981' : '#ef4444'}; color:#fff; border:none; border-radius:4px; font-size:0.7rem; font-weight:700; cursor:pointer;" onclick="${isFull ? `resetHubAction(${hub.id})` : `sendSimulatorWebhook('PENUH ${hub.id}')`}">
+            ${isFull ? 'Tandai Selesai Jemput' : 'Laporkan Penuh'}
+          </button>
+        </div>
+      `;
+    }
+
+    function renderAllHubMarkers(hubs) {
+      hubs.forEach((hub) => {
+        if (markersMap[hub.id]) {
+          markersMap[hub.id].marker.remove();
+        }
+
+        const el = createMarkerElement(hub);
+        const popup = new mapboxgl.Popup({ offset: 20, closeButton: true })
+          .setHTML(createPopupHTML(hub));
+
+        // Use explicit anchor: 'center' to ensure the marker stays pinned to the exact coordinates at all zoom levels
+        const marker = new mapboxgl.Marker({ 
+          element: el, 
+          anchor: 'center' 
+        })
+          .setLngLat([hub.longitude, hub.latitude])
+          .setPopup(popup)
+          .addTo(map);
+
+        markersMap[hub.id] = { marker, element: el, popup };
+      });
+
+      updateDynamicRoutingLine();
+    }
+
+    // Recalculates dynamic route line connecting only active FULL nodes to show DLH efficient routing
+    function updateDynamicRoutingLine() {
+      if (!map || !map.getSource('route-line')) return;
+
+      const fullHubs = hubsData.filter(h => h.status === 'FULL');
+      let coords = [];
+
+      if (fullHubs.length >= 2) {
+        // Connect all full hubs in order
+        coords = fullHubs.map(h => [h.longitude, h.latitude]);
+      } else if (fullHubs.length === 1) {
+        // If only 1 is full, connect from general DLH Banyuwangi depot to that full hub
+        coords = [
+          [114.3645, -8.2165],
+          [fullHubs[0].longitude, fullHubs[0].latitude]
+        ];
+      } else {
+        coords = [];
+      }
+
+      map.getSource('route-line').setData({
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          coordinates: coords
+        }
+      });
+    }
+
+    // ----------------------------------------------------
+    // 4. REAL-TIME UPDATE (SOCKET.IO)
+    // ----------------------------------------------------
+    function updateHubInState(updatedHub) {
+      const index = hubsData.findIndex((h) => h.id === updatedHub.id);
+      if (index !== -1) {
+        hubsData[index] = updatedHub;
+      } else {
+        hubsData.push(updatedHub);
+      }
+
+      // Update Map Marker
+      const markerObj = markersMap[updatedHub.id];
+      if (markerObj) {
+        const el = markerObj.element;
+        const isFull = updatedHub.status === 'FULL';
+
+        if (isFull) {
+          el.classList.remove('marker-empty');
+          el.classList.add('marker-full');
+          el.querySelector('.marker-beacon span').textContent = '🚨';
+        } else {
+          el.classList.remove('marker-full');
+          el.classList.add('marker-empty');
+          el.querySelector('.marker-beacon span').textContent = '♻️';
+        }
+
+        markerObj.popup.setHTML(createPopupHTML(updatedHub));
+
+        // Pan map smoothly to the reported node
+        map.flyTo({
+          center: [updatedHub.longitude, updatedHub.latitude],
+          zoom: 13.8,
+          speed: 1.2
+        });
+      }
+
+      // Re-render route to only target active full hubs
+      updateDynamicRoutingLine();
+      updateSidebarUI();
+
+      showToast(
+        updatedHub.status === 'FULL' ? '🚨' : '♻️',
+        `<strong>${updatedHub.name}</strong> sekarang <span style="color:${updatedHub.status === 'FULL' ? '#f87171' : '#34d399'}">${updatedHub.status}</span> (+10 Poin Diskon Retribusi)!`
+      );
+
+      addActivityLog(updatedHub);
+    }
+
+    // ----------------------------------------------------
+    // 5. SIDEBAR & METRICS UI
+    // ----------------------------------------------------
+    function updateSidebarUI() {
+      const fullCount = hubsData.filter((h) => h.status === 'FULL').length;
+      const emptyCount = hubsData.filter((h) => h.status === 'EMPTY').length;
+      const totalPoints = hubsData.reduce((acc, h) => acc + (h.points || 0), 0);
+
+      document.getElementById('metric-total').textContent = hubsData.length;
+      document.getElementById('metric-full').textContent = fullCount;
+      document.getElementById('metric-empty').textContent = emptyCount;
+      document.getElementById('metric-points').textContent = totalPoints;
+
+      const container = document.getElementById('hub-list-container');
+      container.innerHTML = '';
+
+      hubsData.forEach((hub) => {
+        const isFull = hub.status === 'FULL';
+        const item = document.createElement('div');
+        item.className = `hub-item ${isFull ? 'is-full' : 'is-empty'}`;
+        item.id = `hub-item-${hub.id}`;
+        item.onclick = () => focusHub(hub.id);
+
+        item.innerHTML = `
+          <div class="hub-top">
+            <div>
+              <div class="hub-name">${hub.name}</div>
+              <div class="hub-coord">ID #${hub.id} &bull; ${hub.latitude.toFixed(4)}, ${hub.longitude.toFixed(4)}</div>
+            </div>
+            <div class="hub-badges">
+              <span class="status-tag ${hub.status}">${hub.status}</span>
+              <span class="pts-tag">⭐ ${hub.points} pt</span>
+            </div>
+          </div>
+          <div class="hub-bottom-actions">
+            <span style="font-size:0.68rem; color:${isFull ? '#fca5a5' : '#86efac'};">
+              ${isFull ? '⚠️ Truk DLH Wajib Jemput' : '✅ Tidak Perlu Didatangi'}
+            </span>
+            <button class="dispatch-btn ${isFull ? 'reset-trigger' : 'full-trigger'}" onclick="event.stopPropagation(); ${isFull ? `resetHubAction(${hub.id})` : `sendSimulatorWebhook('PENUH ${hub.id}')`}">
+              ${isFull ? 'Selesai Jemput' : 'Kirim Laporan'}
+            </button>
+          </div>
+        `;
+
+        container.appendChild(item);
+      });
+    }
+
+    function renderQuickTriggers() {
+      const triggerContainer = document.getElementById('sim-triggers-container');
+      triggerContainer.innerHTML = '';
+
+      hubsData.forEach((hub) => {
+        const btn = document.createElement('button');
+        btn.className = 'sim-btn';
+        btn.innerHTML = `<span>#${hub.id} ${hub.name.split('-')[0]}</span> <span>🚨</span>`;
+        btn.onclick = () => sendSimulatorWebhook(`PENUH ${hub.id}`);
+        triggerContainer.appendChild(btn);
+      });
+    }
+
+    function focusHub(id) {
+      const hub = hubsData.find((h) => h.id === id);
+      if (hub && map) {
+        map.flyTo({
+          center: [hub.longitude, hub.latitude],
+          zoom: 14.5,
+          speed: 1.2
+        });
+
+        if (markersMap[id]) {
+          markersMap[id].marker.togglePopup();
+        }
+      }
+    }
+
+    function focusFullHubs() {
+      const fullHub = hubsData.find((h) => h.status === 'FULL');
+      if (fullHub) {
+        focusHub(fullHub.id);
+      } else {
+        map.flyTo({ center: BANYUWANGI_CENTER, zoom: 12.5 });
+      }
+    }
+
+    // ----------------------------------------------------
+    // 6. ACTION DISPATCHERS & SIMULATOR
+    // ----------------------------------------------------
+    async function sendSimulatorWebhook(msg) {
+      try {
+        const res = await fetch('/webhook/whatsapp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg })
+        });
+        const data = await res.json();
+        console.log('Webhook dispatched:', data);
+      } catch (err) {
+        console.error('Error sending webhook:', err);
+      }
+    }
+
+    function sendCustomSimulator() {
+      const input = document.getElementById('sim-custom-input');
+      const text = input.value.trim();
+      if (text) {
+        sendSimulatorWebhook(text);
+      }
+    }
+
+    async function resetHubAction(id) {
+      try {
+        const res = await fetch(`/api/hubs/${id}/reset`, { method: 'POST' });
+        const data = await res.json();
+        console.log('Hub reset:', data);
+      } catch (err) {
+        console.error('Error resetting hub:', err);
+      }
+    }
+
+    function showToast(icon, message) {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.innerHTML = `<span>${icon}</span><div>${message}</div>`;
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transition = 'opacity 0.3s';
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+
+    function addActivityLog(hub) {
+      const feed = document.getElementById('activity-feed');
+      const row = document.createElement('div');
+      row.className = 'activity-row';
+      const now = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+      row.innerHTML = `
+        <div class="activity-time">${now}</div>
+        <div><strong>${hub.name}</strong> dilaporkan <code>${hub.status}</code> &bull; Total poin: <strong>${hub.points} pt</strong>.</div>
+      `;
+
+      feed.insertBefore(row, feed.firstChild);
+    }
+
+    // ----------------------------------------------------
+    // 7. INITIALIZE SOCKET.IO & MAP
+    // ----------------------------------------------------
+    window.addEventListener('DOMContentLoaded', () => {
+      initMap();
+
+      const socket = io();
+      const dot = document.getElementById('socket-dot');
+      const text = document.getElementById('socket-text');
+
+      socket.on('connect', () => {
+        dot.classList.add('connected');
+        text.textContent = 'Terhubung ke Dispatcher';
+      });
+
+      socket.on('disconnect', () => {
+        dot.classList.remove('connected');
+        text.textContent = 'Terputus';
+      });
+
+      socket.on('route_update', (updatedHub) => {
+        console.log('⚡ Socket event received [route_update]:', updatedHub);
+        updateHubInState(updatedHub);
+      });
+    });
+  </script>
+</body>
+</html>
